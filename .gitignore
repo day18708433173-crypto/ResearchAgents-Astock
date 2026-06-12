@@ -1,0 +1,26 @@
+# 环境与密钥
+.env
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+
+# Node / Next.js
+node_modules/
+.next/
+*.tsbuildinfo
+.npm-cache/
+
+# 工具缓存
+.uv-cache/
+.cozeproj/
+.claude/
+
+# 数据与缓存（业务库与可再生缓存均不入库）
+data/
+stock_list.json
+
+# 杂项
+.preview
+logs/

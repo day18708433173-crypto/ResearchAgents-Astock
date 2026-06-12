@@ -1,0 +1,462 @@
+"""头脑风暴室辩论编排器
+
+支持两种模式：
+1. 同步模式：run_debate() 返回完整结果
+2. 流式模式：stream_debate() 返回Generator，实时推送每轮发言
+
+新增功能：
+- SSE实时输出
+"""
+import json
+import re
+import sqlite3
+import time
+import yaml
+from pathlib import Path
+from typing import Generator, Optional
+from services.llm_client import chat, stream_chat
+from modules.debate.data_card import generate as gen_data_card
+from modules.debate.agents import (
+    build_debate_prompt, build_judge_prompt,
+)
+from modules.debate.source_tagger import tag_output
+from modules.debate.fact_check import verify
+
+ROOT = Path(__file__).parent.parent.parent
+
+
+def _resolve_max_rounds(coverage: int) -> int:
+    """从 config.yaml 读取辩论轮数；覆盖率 <50% 时降级为 1 轮。"""
+    with open(ROOT / "config.yaml", encoding="utf-8") as f:
+        configured = yaml.safe_load(f).get("debate", {}).get("max_rounds", 3)
+    if coverage < 50:
+        return min(configured, 1)
+    return configured
+
+
+def _strip_html(text: str) -> str:
+    """清洗 LLM 输出中的 HTML 标签"""
+    if not text:
+        return text
+    text = re.sub(r'<[^>]+>', '', text)
+    text = text.replace('&lt;', '<').replace('&gt;', '>').replace('&amp;', '&')
+    return text.strip()
+
+
+# ═══════════════════════════════════════════════
+#  同步辩论模式
+# ═══════════════════════════════════════════════
+
+def run_debate(ticker: str, ticker_name: str = "",
+               decision_context: dict = None,
+               existing_debate_id: int = None) -> dict:
+    """执行完整辩论流程（同步模式）。
+
+    Args:
+        ticker: 股票代码
+        ticker_name: 股票名称
+        decision_context: 用户决策背景信息（可选）
+        existing_debate_id: 后台异步模式时传入的辩论ID
+
+    Returns:
+        dict: 完整辩论结果，包含rounds、data_card、judge_verdict等
+    """
+    result = {
+        "ticker": ticker,
+        "ticker_name": ticker_name,
+        "decision_context": decision_context,
+        "rounds": [],
+        "fact_check": None,
+        "total_llm_calls": 0,
+        "estimated_cost": 0.0,
+        "hallucination_terminated": False,
+        "error": None,
+    }
+
+    # Step 1: 数据卡
+    card = gen_data_card(ticker)
+    result["data_card"] = card
+    result["coverage"] = card["coverage"]
+    data_card_id = _save_data_card(card)
+    result["data_card_id"] = data_card_id
+
+    # Step 1.5: RAG 知识增强
+    rag_context = None
+    try:
+        from services.rag.context_builder import enrich_data_card
+        rag_context = enrich_data_card(ticker, card)
+        card["rag_context"] = rag_context
+        result["rag_context"] = rag_context
+    except Exception as e:
+        result["rag_warning"] = f"RAG enrichment skipped: {e}"
+
+    if card["coverage"] < 30:
+        result["error"] = f"数据卡覆盖率仅{card['coverage']}%，数据不足，无法启动辩论"
+        return result
+
+    max_rounds = _resolve_max_rounds(card["coverage"])
+    result["max_rounds"] = max_rounds
+    if max_rounds < 3:
+        result["degraded"] = True
+
+    # Step 2-4: 多轮辩论
+    fields = card.get("fields", {})
+    bull_msg = ""
+    bear_msg = ""
+    hallucination_count = 0
+    cost_per_call = 0.003
+
+    for r in range(1, max_rounds + 1):
+        # Bull 发言
+        try:
+            sys_bull, user_bull = build_debate_prompt("bull", card, bear_msg, r, rag_context)
+            bull_msg = _strip_html(chat(user_bull, system=sys_bull, scenario="debate"))
+            result["total_llm_calls"] += 1
+            result["estimated_cost"] += cost_per_call
+        except Exception as e:
+            bull_msg = f"[多头发言生成失败: {e}]"
+
+        # Bear 发言
+        try:
+            sys_bear, user_bear = build_debate_prompt("bear", card, bull_msg, r, rag_context)
+            bear_msg = _strip_html(chat(user_bear, system=sys_bear, scenario="debate"))
+            result["total_llm_calls"] += 1
+            result["estimated_cost"] += cost_per_call
+        except Exception as e:
+            bear_msg = f"[空头发言生成失败: {e}]"
+
+        # 信源标注
+        bull_tags = tag_output(bull_msg, fields, rag_context)
+        bear_tags = tag_output(bear_msg, fields, rag_context)
+
+        # 幻觉检测
+        bull_unverified = sum(1 for t in bull_tags if t["tag"] == "待核实")
+        bear_unverified = sum(1 for t in bear_tags if t["tag"] == "待核实")
+        hallucination_count += bull_unverified + bear_unverified
+
+        round_data = {
+            "round": r,
+            "bull": bull_msg,
+            "bear": bear_msg,
+            "bull_tags": bull_tags,
+            "bear_tags": bear_tags,
+        }
+        result["rounds"].append(round_data)
+
+        if hallucination_count > 8:
+            result["hallucination_terminated"] = True
+            break
+
+    # Step 5: 事实校验
+    fact_result = verify(result["rounds"], card)
+    result["fact_check"] = fact_result
+    result["accuracy_grade"] = fact_result.get("accuracy_grade", "B")
+
+    # Step 6: 裁判裁决
+    try:
+        judge_sys, judge_usr = build_judge_prompt(
+            ticker=ticker, name=ticker_name,
+            rounds=result["rounds"],
+            fact_check=fact_result,
+            rag_context=rag_context,
+            data_card=card,
+        )
+        judge_raw = chat(judge_usr, system=judge_sys)
+        result["total_llm_calls"] += 1
+        result["estimated_cost"] += cost_per_call
+
+        judge_json_match = re.search(r'\{[\s\S]*\}', judge_raw)
+        if judge_json_match:
+            judge_verdict = json.loads(judge_json_match.group())
+        else:
+            judge_verdict = {
+                "rating": "持有",
+                "confidence": 0.5,
+                "summary": judge_raw[:500],
+                "bull_strengths": [],
+                "bear_strengths": [],
+                "key_risk": "",
+                "key_opportunity": "",
+            }
+        result["judge_verdict"] = judge_verdict
+    except Exception:
+        result["judge_verdict"] = {
+            "rating": "持有",
+            "confidence": 0.0,
+            "summary": "裁判 LLM 调用失败",
+            "bull_strengths": [],
+            "bear_strengths": [],
+            "bull_weaknesses": [],
+            "bear_weaknesses": [],
+            "key_risk": "",
+            "key_opportunity": "",
+            "missing_info": "",
+            "action_hint": "请手动分析辩论内容",
+        }
+
+    # 存档
+    if existing_debate_id is not None:
+        _update_debate_completion(existing_debate_id, result)
+        result["debate_id"] = existing_debate_id
+    else:
+        result["debate_id"] = _save_debate_log(result)
+
+    # 辩论历史不再索引到 RAG 库（保留在关系数据库 debate_record 表中用于用户查看）
+    # 原因：辩论历史是结构化对话数据，不适合向量检索；历史观点可能过时；避免 Agent 过度依赖历史观点
+
+    return result
+
+
+# ═══════════════════════════════════════════════
+#  流式辩论模式（SSE）
+# ═══════════════════════════════════════════════
+
+def stream_debate(ticker: str, ticker_name: str = "") -> Generator[dict, None, None]:
+    """流式辩论（实时推送每轮发言）
+
+    Yields:
+        dict: 每次推送一个事件，类型包括：
+        - {"type": "status", "message": "..."} 状态更新
+        - {"type": "data_card", "data": {...}} 数据卡生成完成
+        - {"type": "round_start", "round": 1} 开始新一轮
+        - {"type": "bull_token", "round": 1, "delta": "..."} 多头发言 token
+        - {"type": "bull_speak", "round": 1, "content": "..."} 多头发言完成
+        - {"type": "bear_token", "round": 1, "delta": "..."} 空头发言 token
+        - {"type": "bear_speak", "round": 1, "content": "..."} 空头发言完成
+        - {"type": "judge", "data": {...}} 裁判裁决
+        - {"type": "complete", "data": {...}} 辩论完成
+        - {"type": "error", "message": "..."} 错误
+    """
+    result = {
+        "ticker": ticker,
+        "ticker_name": ticker_name,
+        "rounds": [],
+        "total_llm_calls": 0,
+        "estimated_cost": 0.0,
+    }
+
+    # Step 1: 数据卡
+    yield {"type": "status", "message": "正在生成数据卡..."}
+    try:
+        card = gen_data_card(ticker)
+        result["data_card"] = card
+        result["coverage"] = card["coverage"]
+        yield {"type": "data_card", "data": card}
+    except Exception as e:
+        yield {"type": "error", "message": f"数据卡生成失败: {e}"}
+        return
+
+    if card["coverage"] < 30:
+        yield {"type": "error", "message": f"数据覆盖率仅{card['coverage']}%，不足30%，无法辩论"}
+        return
+
+    # RAG增强
+    rag_context = None
+    try:
+        from services.rag.context_builder import enrich_data_card
+        rag_context = enrich_data_card(ticker, card)
+        result["rag_context"] = rag_context
+        yield {"type": "status", "message": "RAG知识增强完成"}
+    except Exception:
+        pass
+
+    max_rounds = _resolve_max_rounds(card["coverage"])
+    result["max_rounds"] = max_rounds
+
+    fields = card.get("fields", {})
+    bull_msg = ""
+    bear_msg = ""
+    cost_per_call = 0.003
+
+    for r in range(1, max_rounds + 1):
+        yield {"type": "round_start", "round": r}
+
+        # Bull发言（token 级流式）
+        yield {"type": "status", "message": f"多头第{r}轮发言..."}
+        try:
+            sys_bull, user_bull = build_debate_prompt("bull", card, bear_msg, r, rag_context)
+            bull_raw = ""
+            for token in stream_chat(user_bull, system=sys_bull, scenario="debate"):
+                bull_raw += token
+                yield {"type": "bull_token", "round": r, "delta": token}
+            bull_msg = _strip_html(bull_raw)
+            result["total_llm_calls"] += 1
+            result["estimated_cost"] += cost_per_call
+            yield {"type": "bull_speak", "round": r, "content": bull_msg}
+        except Exception as e:
+            bull_msg = f"[生成失败: {e}]"
+            yield {"type": "bull_speak", "round": r, "content": bull_msg}
+
+        # Bear发言（token 级流式）
+        yield {"type": "status", "message": f"空头第{r}轮发言..."}
+        try:
+            sys_bear, user_bear = build_debate_prompt("bear", card, bull_msg, r, rag_context)
+            bear_raw = ""
+            for token in stream_chat(user_bear, system=sys_bear, scenario="debate"):
+                bear_raw += token
+                yield {"type": "bear_token", "round": r, "delta": token}
+            bear_msg = _strip_html(bear_raw)
+            result["total_llm_calls"] += 1
+            result["estimated_cost"] += cost_per_call
+            yield {"type": "bear_speak", "round": r, "content": bear_msg}
+        except Exception as e:
+            bear_msg = f"[生成失败: {e}]"
+            yield {"type": "bear_speak", "round": r, "content": bear_msg}
+
+        result["rounds"].append({
+            "round": r,
+            "bull": bull_msg,
+            "bear": bear_msg,
+        })
+
+        time.sleep(0.1)  # 短暂延迟让前端有时间渲染
+
+    # 裁判裁决
+    yield {"type": "status", "message": "裁判正在综合评判..."}
+    try:
+        judge_sys, judge_usr = build_judge_prompt(
+            ticker, ticker_name, result["rounds"],
+            rag_context=rag_context,
+            data_card=card,
+        )
+        judge_raw = chat(judge_usr, system=judge_sys)
+        result["total_llm_calls"] += 1
+        result["estimated_cost"] += cost_per_call
+
+        judge_json_match = re.search(r'\{[\s\S]*\}', judge_raw)
+        if judge_json_match:
+            judge_verdict = json.loads(judge_json_match.group())
+        else:
+            judge_verdict = {"rating": "持有", "confidence": 0.5, "summary": judge_raw[:500]}
+        result["judge_verdict"] = judge_verdict
+        yield {"type": "judge", "data": judge_verdict}
+    except Exception as e:
+        yield {"type": "judge", "data": {"rating": "持有", "summary": f"裁决失败: {e}"}}
+
+    # 存档
+    debate_id = _save_debate_log(result)
+    result["debate_id"] = debate_id
+    yield {"type": "complete", "data": result}
+
+
+# ═══════════════════════════════════════════════
+#  数据持久化
+# ═══════════════════════════════════════════════
+
+def _save_data_card(card: dict) -> int:
+    """保存数据卡到 data_cards 表，返回 row id"""
+    db = ROOT / "data" / "jingheng.db"
+    db.parent.mkdir(parents=True, exist_ok=True)
+    db.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(str(db))
+    conn.execute("PRAGMA journal_mode=WAL")
+
+    conn.executescript("""
+    CREATE TABLE IF NOT EXISTS data_cards (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        ticker TEXT NOT NULL,
+        coverage INTEGER DEFAULT 0,
+        fields TEXT,
+        generated_at TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+    """)
+
+    cur = conn.execute(
+        "INSERT INTO data_cards (ticker, coverage, fields, generated_at) VALUES (?, ?, ?, ?)",
+        (
+            card["ticker"],
+            card["coverage"],
+            json.dumps(card.get("fields", {})),
+            card.get("generated_at", ""),
+        ),
+    )
+    conn.commit()
+    conn.close()
+    return cur.lastrowid
+
+
+def _save_debate_log(result: dict) -> int:
+    """保存辩论记录"""
+    from services.db_init import get_db
+
+    conn = get_db()
+
+    cur = conn.execute(
+        """INSERT INTO debate_record 
+           (ticker, ticker_name, template_id, coverage, rounds, data_card_id, 
+            judge_verdict, accuracy_grade, total_llm_calls, estimated_cost)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (
+            result.get("ticker", ""),
+            result.get("ticker_name", ""),
+            "",
+            result.get("coverage", 0),
+            json.dumps(result.get("rounds", [])),
+            result.get("data_card_id"),
+            json.dumps(result.get("judge_verdict", {})),
+            result.get("accuracy_grade", "B"),
+            result.get("total_llm_calls", 0),
+            result.get("estimated_cost", 0.0),
+        ),
+    )
+    conn.commit()
+    debate_id = cur.lastrowid
+    conn.close()
+
+    # 保存Agent对话
+    for r in result.get("rounds", []):
+        _save_agent_conversation(debate_id, r)
+
+    return debate_id
+
+
+def _save_agent_conversation(debate_id: int, round_data: dict):
+    """保存每轮Agent对话"""
+    from services.db_init import get_db
+
+    conn = get_db()
+
+    conn.execute(
+        "INSERT INTO agent_conversation (debate_id, round_num, agent_role, content) VALUES (?, ?, ?, ?)",
+        (debate_id, round_data.get("round", 1), "bull", round_data.get("bull", "")),
+    )
+    conn.execute(
+        "INSERT INTO agent_conversation (debate_id, round_num, agent_role, content) VALUES (?, ?, ?, ?)",
+        (debate_id, round_data.get("round", 1), "bear", round_data.get("bear", "")),
+    )
+    conn.commit()
+    conn.close()
+
+
+def _update_debate_completion(debate_id: int, result: dict):
+    """更新已有辩论记录（后台异步模式）"""
+    from services.db_init import get_db
+
+    conn = get_db()
+    conn.execute(
+        """UPDATE debate_record SET
+           coverage=?, rounds=?, judge_verdict=?, accuracy_grade=?,
+           total_llm_calls=?, estimated_cost=? WHERE id=?""",
+        (
+            result.get("coverage", 0),
+            json.dumps(result.get("rounds", [])),
+            json.dumps(result.get("judge_verdict", {})),
+            result.get("accuracy_grade", "B"),
+            result.get("total_llm_calls", 0),
+            result.get("estimated_cost", 0.0),
+            debate_id,
+        ),
+    )
+    conn.commit()
+    conn.close()
+
+    conn = get_db()
+    conn.execute(
+        "DELETE FROM agent_conversation WHERE debate_id = ? AND agent_role IN ('bull', 'bear')",
+        (debate_id,),
+    )
+    conn.commit()
+    conn.close()
+    for r in result.get("rounds", []):
+        _save_agent_conversation(debate_id, r)

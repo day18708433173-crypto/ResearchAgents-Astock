@@ -1,0 +1,52 @@
+# --- 镜衡 全局配置 ---
+# LLM
+llm:
+  provider: deepseek
+  model: deepseek-v4-pro           # 主力模型（辩论回合、复盘、画像）
+  reasoning_model: deepseek-v4-pro  # 强推理模型（盲区扫描、事实校验）
+  api_key: ${DEEPSEEK_API_KEY}
+  base_url: https://api.deepseek.com/v1
+  max_tokens: 4096
+  max_tokens_debate: 1024   # 辩论单轮约 200 字；512 会触发 length 截断
+  max_tokens_coach: 2048    # 策略教练回复
+  temperature: 0.7
+
+# 市场数据
+market_data:
+  cache_ttl_hours: 24
+
+# 辩论
+debate:
+  max_rounds: 1  # 测试用 1 轮；正式环境改回 3
+  cost_estimate_per_debate_usd: 0.03
+  data_card_min_coverage: 60       # 数据卡覆盖率低于此值降级
+  data_card_reject_coverage: 30    # 数据卡覆盖率低于此值拒绝
+  hallucination_terminate_threshold: 8  # 同一session中>N条待核实标签时终止
+
+# 数据库
+database:
+  path: data/jingheng.db
+
+# RAG 知识库
+rag:
+  vector_db_path: data/rag_vectors.db
+  cache_db_path: data/rag_cache.db
+  embedding_model: BAAI/bge-m3
+  embedding_dim: 1024
+  # 检索参数
+  retrieval:
+    top_k_default: 5
+    min_score: 0.02
+    max_chunks_per_query: 10
+  # 索引 TTL (小时)
+  indexing:
+    company_profile_ttl_hours: 168     # 7天
+    industry_benchmark_ttl_hours: 168   # 7天
+    announcement_ttl_hours: 6           # 6小时
+    financial_report_ttl_hours: 24      # 24小时
+    debate_history_ttl_hours: -1        # 已禁用辩论历史索引
+    concept_definition_ttl_hours: -1    # 永久
+  # 预索引 (启动时)
+  pre_index:
+    concepts: true           # 金融概念定义
+    industry_benchmarks: true # 申万行业对标
