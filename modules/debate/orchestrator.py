@@ -13,7 +13,7 @@ import sqlite3
 import time
 import yaml
 from pathlib import Path
-from typing import Generator, Optional
+from typing import Generator, Mapping, Optional
 from services.llm_client import chat, stream_chat
 from modules.debate.data_card import generate as gen_data_card
 from modules.debate.agents import (
@@ -50,7 +50,8 @@ def _strip_html(text: str) -> str:
 def run_debate(ticker: str, ticker_name: str = "",
                decision_context: dict = None,
                existing_debate_id: int = None,
-               focus_question: str = "") -> dict:
+               focus_question: str = "",
+               llm_config: Mapping[str, str] | None = None) -> dict:
     """执行完整辩论流程（同步模式）。
 
     Args:
@@ -111,7 +112,7 @@ def run_debate(ticker: str, ticker_name: str = "",
         # Bull 发言
         try:
             sys_bull, user_bull = build_debate_prompt("bull", card, bear_msg, r, rag_context, focus_question)
-            bull_msg = _strip_html(chat(user_bull, system=sys_bull, scenario="debate"))
+            bull_msg = _strip_html(chat(user_bull, system=sys_bull, scenario="debate", llm_config=llm_config))
             result["total_llm_calls"] += 1
             result["estimated_cost"] += cost_per_call
         except Exception as e:
@@ -120,7 +121,7 @@ def run_debate(ticker: str, ticker_name: str = "",
         # Bear 发言
         try:
             sys_bear, user_bear = build_debate_prompt("bear", card, bull_msg, r, rag_context, focus_question)
-            bear_msg = _strip_html(chat(user_bear, system=sys_bear, scenario="debate"))
+            bear_msg = _strip_html(chat(user_bear, system=sys_bear, scenario="debate", llm_config=llm_config))
             result["total_llm_calls"] += 1
             result["estimated_cost"] += cost_per_call
         except Exception as e:
@@ -163,7 +164,7 @@ def run_debate(ticker: str, ticker_name: str = "",
             data_card=card,
             focus_question=focus_question,
         )
-        judge_raw = chat(judge_usr, system=judge_sys)
+        judge_raw = chat(judge_usr, system=judge_sys, llm_config=llm_config)
         result["total_llm_calls"] += 1
         result["estimated_cost"] += cost_per_call
 
@@ -210,7 +211,12 @@ def run_debate(ticker: str, ticker_name: str = "",
 #  流式辩论模式（SSE）
 # ═══════════════════════════════════════════════
 
-def stream_debate(ticker: str, ticker_name: str = "", focus_question: str = "") -> Generator[dict, None, None]:
+def stream_debate(
+    ticker: str,
+    ticker_name: str = "",
+    focus_question: str = "",
+    llm_config: Mapping[str, str] | None = None,
+) -> Generator[dict, None, None]:
     """流式辩论（实时推送每轮发言）
 
     Yields:
@@ -275,7 +281,7 @@ def stream_debate(ticker: str, ticker_name: str = "", focus_question: str = "") 
         try:
             sys_bull, user_bull = build_debate_prompt("bull", card, bear_msg, r, rag_context, focus_question)
             bull_raw = ""
-            for token in stream_chat(user_bull, system=sys_bull, scenario="debate"):
+            for token in stream_chat(user_bull, system=sys_bull, scenario="debate", llm_config=llm_config):
                 bull_raw += token
                 yield {"type": "bull_token", "round": r, "delta": token}
             bull_msg = _strip_html(bull_raw)
@@ -291,7 +297,7 @@ def stream_debate(ticker: str, ticker_name: str = "", focus_question: str = "") 
         try:
             sys_bear, user_bear = build_debate_prompt("bear", card, bull_msg, r, rag_context, focus_question)
             bear_raw = ""
-            for token in stream_chat(user_bear, system=sys_bear, scenario="debate"):
+            for token in stream_chat(user_bear, system=sys_bear, scenario="debate", llm_config=llm_config):
                 bear_raw += token
                 yield {"type": "bear_token", "round": r, "delta": token}
             bear_msg = _strip_html(bear_raw)
@@ -319,7 +325,7 @@ def stream_debate(ticker: str, ticker_name: str = "", focus_question: str = "") 
             data_card=card,
             focus_question=focus_question,
         )
-        judge_raw = chat(judge_usr, system=judge_sys)
+        judge_raw = chat(judge_usr, system=judge_sys, llm_config=llm_config)
         result["total_llm_calls"] += 1
         result["estimated_cost"] += cost_per_call
 

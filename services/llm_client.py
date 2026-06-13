@@ -3,7 +3,7 @@
 性能优化：config 和 client 模块级缓存，避免每次 chat() 重复读取 YAML 和创建连接。
 """
 from collections.abc import AsyncIterator, Iterator
-from typing import Literal
+from typing import Literal, Mapping
 
 import yaml
 from dotenv import load_dotenv
@@ -55,8 +55,23 @@ def _build_messages(prompt: str, system: str = "") -> list[dict]:
     return messages
 
 
-def create_client() -> OpenAI:
+def _resolve_config(llm_config: Mapping[str, str] | None = None) -> dict:
+    """Merge request-scoped LLM config over the default YAML config."""
+    cfg = dict(get_llm_config())
+    if llm_config:
+        for key in ("api_key", "base_url", "model", "reasoning_model"):
+            value = (llm_config.get(key) or "").strip()
+            if value:
+                cfg[key] = value
+    return cfg
+
+
+def create_client(llm_config: Mapping[str, str] | None = None) -> OpenAI:
     """创建/复用 LLM 客户端（模块级缓存）。"""
+    if llm_config:
+        cfg = _resolve_config(llm_config)
+        return OpenAI(api_key=cfg["api_key"], base_url=cfg["base_url"])
+
     global _cached_client
     if _cached_client is not None:
         return _cached_client
@@ -65,8 +80,12 @@ def create_client() -> OpenAI:
     return _cached_client
 
 
-def create_async_client() -> AsyncOpenAI:
+def create_async_client(llm_config: Mapping[str, str] | None = None) -> AsyncOpenAI:
     """创建/复用异步 LLM 客户端。"""
+    if llm_config:
+        cfg = _resolve_config(llm_config)
+        return AsyncOpenAI(api_key=cfg["api_key"], base_url=cfg["base_url"])
+
     global _cached_async_client
     if _cached_async_client is not None:
         return _cached_async_client
@@ -80,11 +99,14 @@ def chat(
     system: str = "",
     use_reasoning: bool = False,
     scenario: Scenario = "default",
+    llm_config: Mapping[str, str] | None = None,
 ) -> str:
     """单轮对话，返回文本内容。use_reasoning=True时使用强推理模型。"""
-    cfg = get_llm_config()
-    client = create_client()
-    model = cfg["reasoning_model"] if use_reasoning else cfg["model"]
+    cfg = _resolve_config(llm_config)
+    client = create_client(llm_config)
+    model = cfg.get("reasoning_model") if use_reasoning else cfg["model"]
+    if not model:
+        model = cfg["model"]
     resp = client.chat.completions.create(
         model=model,
         messages=_build_messages(prompt, system),
@@ -94,10 +116,14 @@ def chat(
     return resp.choices[0].message.content
 
 
-def chat_with_search(prompt: str, system: str = "") -> str:
+def chat_with_search(
+    prompt: str,
+    system: str = "",
+    llm_config: Mapping[str, str] | None = None,
+) -> str:
     """带联网搜索的单轮对话。DeepSeek 会实时检索互联网获取最新信息。"""
-    cfg = get_llm_config()
-    client = create_client()
+    cfg = _resolve_config(llm_config)
+    client = create_client(llm_config)
     resp = client.chat.completions.create(
         model=cfg["model"],
         messages=_build_messages(prompt, system),
@@ -113,11 +139,14 @@ def stream_chat(
     system: str = "",
     use_reasoning: bool = False,
     scenario: Scenario = "default",
+    llm_config: Mapping[str, str] | None = None,
 ) -> Iterator[str]:
     """流式对话，返回生成器。use_reasoning=True时使用强推理模型。"""
-    cfg = get_llm_config()
-    client = create_client()
-    model = cfg["reasoning_model"] if use_reasoning else cfg["model"]
+    cfg = _resolve_config(llm_config)
+    client = create_client(llm_config)
+    model = cfg.get("reasoning_model") if use_reasoning else cfg["model"]
+    if not model:
+        model = cfg["model"]
     stream = client.chat.completions.create(
         model=model,
         messages=_build_messages(prompt, system),
@@ -135,11 +164,14 @@ async def astream_chat(
     system: str = "",
     use_reasoning: bool = False,
     scenario: Scenario = "default",
+    llm_config: Mapping[str, str] | None = None,
 ) -> AsyncIterator[str]:
     """异步流式对话，供 FastAPI SSE 使用。"""
-    cfg = get_llm_config()
-    client = create_async_client()
-    model = cfg["reasoning_model"] if use_reasoning else cfg["model"]
+    cfg = _resolve_config(llm_config)
+    client = create_async_client(llm_config)
+    model = cfg.get("reasoning_model") if use_reasoning else cfg["model"]
+    if not model:
+        model = cfg["model"]
     stream = await client.chat.completions.create(
         model=model,
         messages=_build_messages(prompt, system),

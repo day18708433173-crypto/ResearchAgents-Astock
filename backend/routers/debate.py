@@ -9,7 +9,7 @@ import json
 import logging
 from typing import List
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 
 from services.db_init import get_db
@@ -44,14 +44,36 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
+def _llm_config_from_request(request: Request) -> dict[str, str] | None:
+    """Read optional OpenAI-compatible LLM config from request headers."""
+    api_key = (request.headers.get("x-jh-llm-api-key") or "").strip()
+    base_url = (request.headers.get("x-jh-llm-base-url") or "").strip()
+    model = (request.headers.get("x-jh-llm-model") or "").strip()
+    reasoning_model = (request.headers.get("x-jh-llm-reasoning-model") or "").strip()
+
+    supplied = any([api_key, base_url, model, reasoning_model])
+    if not supplied:
+        return None
+    if not api_key or not base_url or not model:
+        raise HTTPException(status_code=400, detail="自定义 LLM 配置需同时提供 API Key、Base URL 和模型名")
+    return {
+        "api_key": api_key,
+        "base_url": base_url.rstrip("/"),
+        "model": model,
+        "reasoning_model": reasoning_model or model,
+    }
+
+
 @router.post("/api/debate/run", response_model=DebateResponse)
-async def debate_run(req: DebateRequest):
+async def debate_run(req: DebateRequest, request: Request):
     """运行辩论（同步）：生成多角度通用股票分析内容。"""
+    llm_config = _llm_config_from_request(request)
     try:
         result = _run_debate(
             ticker=req.ticker,
             ticker_name=req.ticker_name,
             focus_question=req.focus_question or "",
+            llm_config=llm_config,
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -209,6 +231,7 @@ async def debate_history_detail(debate_id: int):
 
 @router.api_route("/api/debate/stream", methods=["GET", "POST"])
 async def debate_stream(
+    request: Request,
     ticker: str = Query(..., description="股票代码"),
     ticker_name: str = Query(default="", description="股票名称"),
     focus_question: str = Query(default="", description="可选聚焦问题"),
@@ -225,13 +248,20 @@ async def debate_stream(
     - complete: 辩论完成
     - error: 错误
     """
+    llm_config = _llm_config_from_request(request)
+
     async def event_generator():
         queue: asyncio.Queue = asyncio.Queue()
         loop = asyncio.get_running_loop()
 
         def producer():
             try:
-                for event in _stream_debate(ticker, ticker_name, focus_question=focus_question):
+                for event in _stream_debate(
+                    ticker,
+                    ticker_name,
+                    focus_question=focus_question,
+                    llm_config=llm_config,
+                ):
                     loop.call_soon_threadsafe(queue.put_nowait, event)
             except Exception as e:
                 loop.call_soon_threadsafe(
@@ -261,8 +291,9 @@ async def debate_stream(
 
 
 @router.post("/api/debate/coach", response_model=CoachChatResponse)
-async def debate_coach(request: CoachChatRequest):
+async def debate_coach(request: CoachChatRequest, http_request: Request):
     """策略教练对话接口（同步，保留兼容）"""
+    llm_config = _llm_config_from_request(http_request)
     try:
         _, _, user_input = _prepare_coach_prompts(request)
         if _is_coach_save_intent(user_input):
@@ -277,7 +308,12 @@ async def debate_coach(request: CoachChatRequest):
             return CoachChatResponse(reply=meta.pop("reply"), **meta)
 
         system_prompt, user_prompt, user_input = _prepare_coach_prompts(request)
-        reply = chat(user_prompt, system_prompt, scenario="coach")
+        reply = chat(
+            user_prompt,
+            system_prompt,
+            scenario="coach",
+            llm_config=llm_config,
+        )
         meta = _compute_coach_meta(request, reply, user_input)
         return CoachChatResponse(reply=reply, **meta)
     except Exception as e:
@@ -286,8 +322,10 @@ async def debate_coach(request: CoachChatRequest):
 
 
 @router.post("/api/debate/coach/stream")
-async def debate_coach_stream(request: CoachChatRequest):
+async def debate_coach_stream(request: CoachChatRequest, http_request: Request):
     """策略教练 SSE 流式对话"""
+    llm_config = _llm_config_from_request(http_request)
+
     async def event_generator():
         try:
             _, _, user_input = _prepare_coach_prompts(request)
@@ -308,7 +346,12 @@ async def debate_coach_stream(request: CoachChatRequest):
 
             system_prompt, user_prompt, user_input = _prepare_coach_prompts(request)
             reply = ""
-            async for token in astream_chat(user_prompt, system_prompt, scenario="coach"):
+            async for token in astream_chat(
+                user_prompt,
+                system_prompt,
+                scenario="coach",
+                llm_config=llm_config,
+            ):
                 reply += token
                 yield f"data: {json.dumps({'type': 'token', 'delta': token}, ensure_ascii=False)}\n\n"
             meta = _compute_coach_meta(request, reply, user_input)
@@ -330,8 +373,9 @@ async def debate_coach_stream(request: CoachChatRequest):
 
 
 @router.post("/api/debate/knowledge")
-async def debate_knowledge(request: KnowledgeRequest):
+async def debate_knowledge(request: KnowledgeRequest, http_request: Request):
     """金融科普 Agent：解释辩论中的术语，支持多轮追问。"""
+    llm_config = _llm_config_from_request(http_request)
     try:
         context_type, context_detail = _parse_knowledge_context(request.context)
         history = [m.dict() if hasattr(m, "dict") else m for m in request.history]
@@ -358,7 +402,11 @@ async def debate_knowledge(request: KnowledgeRequest):
             rag_reference=rag_reference,
         )
 
-        reply = chat(prompt=user_prompt, system=system_prompt)
+        reply = chat(
+            prompt=user_prompt,
+            system=system_prompt,
+            llm_config=llm_config,
+        )
         explanation, related_terms = _parse_knowledge_reply(reply)
 
         return KnowledgeResponse(

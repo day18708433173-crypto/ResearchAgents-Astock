@@ -7,6 +7,7 @@ import type {
   StrategyVersion,
   Transaction,
 } from "@/types";
+import { buildUserLlmHeaders } from "@/lib/llmConfig";
 
 // 导出类型供其他模块使用
 export type { StockSearchResult, Dossier, StrategyVersion, Transaction } from "@/types";
@@ -287,7 +288,7 @@ export async function streamCoachChat(
 ): Promise<void> {
   const res = await fetch("/api/debate/coach/stream", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...buildUserLlmHeaders() },
     body: JSON.stringify(body),
     signal,
   });
@@ -349,7 +350,7 @@ export interface KnowledgeResponse {
 export async function askKnowledge(request: KnowledgeRequest): Promise<KnowledgeResponse> {
   const res = await fetch(`${API_BASE}/api/debate/knowledge`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...buildUserLlmHeaders() },
     body: JSON.stringify(request),
   });
   if (!res.ok) {

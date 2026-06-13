@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
+import { buildUserLlmHeaders } from '@/lib/llmConfig';
 
 // 类型定义
 export interface Stock {
@@ -114,7 +115,10 @@ export function useDebateStream({ onDebateStart, onComplete, toast, focusQuestio
     const streamUrl = `/api/debate/stream?${params.toString()}`;
 
     try {
-      const response = await fetch(streamUrl, { signal: abortController.signal });
+      const response = await fetch(streamUrl, {
+        signal: abortController.signal,
+        headers: buildUserLlmHeaders(),
+      });
 
       if (!response.ok) {
         const errorText = await response.text();

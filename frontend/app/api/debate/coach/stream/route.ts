@@ -4,6 +4,20 @@
 
 import { BACKEND_URL } from "@/lib/backend";
 
+function llmHeaders(request: Request): HeadersInit {
+  const headers: Record<string, string> = {};
+  for (const name of [
+    "x-jh-llm-api-key",
+    "x-jh-llm-base-url",
+    "x-jh-llm-model",
+    "x-jh-llm-reasoning-model",
+  ]) {
+    const value = request.headers.get(name);
+    if (value) headers[name] = value;
+  }
+  return headers;
+}
+
 export async function POST(request: Request) {
   try {
     const body = await request.json();
@@ -15,6 +29,7 @@ export async function POST(request: Request) {
         "Content-Type": "application/json",
         Accept: "text/event-stream",
         "Cache-Control": "no-cache",
+        ...llmHeaders(request),
       },
       body: JSON.stringify(body),
     });

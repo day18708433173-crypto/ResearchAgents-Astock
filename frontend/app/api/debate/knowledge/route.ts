@@ -1,6 +1,20 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { BACKEND_URL } from '@/lib/backend';
 
+function llmHeaders(request: NextRequest): HeadersInit {
+  const headers: Record<string, string> = {};
+  for (const name of [
+    'x-jh-llm-api-key',
+    'x-jh-llm-base-url',
+    'x-jh-llm-model',
+    'x-jh-llm-reasoning-model',
+  ]) {
+    const value = request.headers.get(name);
+    if (value) headers[name] = value;
+  }
+  return headers;
+}
+
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
@@ -13,6 +27,7 @@ export async function POST(request: NextRequest) {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
+        ...llmHeaders(request),
       },
       body: JSON.stringify(body),
     });

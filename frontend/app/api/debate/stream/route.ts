@@ -5,10 +5,25 @@
 
 import { BACKEND_URL } from '@/lib/backend';
 
+function llmHeaders(request: Request): HeadersInit {
+  const headers: Record<string, string> = {};
+  for (const name of [
+    'x-jh-llm-api-key',
+    'x-jh-llm-base-url',
+    'x-jh-llm-model',
+    'x-jh-llm-reasoning-model',
+  ]) {
+    const value = request.headers.get(name);
+    if (value) headers[name] = value;
+  }
+  return headers;
+}
+
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const ticker = searchParams.get('ticker');
   const ticker_name = searchParams.get('ticker_name');
+  const focus_question = searchParams.get('focus_question');
   
   if (!ticker) {
     return new Response(JSON.stringify({ error: '缺少ticker参数' }), {
@@ -18,6 +33,7 @@ export async function GET(request: Request) {
   }
   
   const params = new URLSearchParams({ ticker, ticker_name: ticker_name || '' });
+  if (focus_question) params.set('focus_question', focus_question);
 
   const targetUrl = `${BACKEND_URL}/api/debate/stream?${params.toString()}`;
   
@@ -28,6 +44,7 @@ export async function GET(request: Request) {
       headers: {
         'Accept': 'text/event-stream',
         'Cache-Control': 'no-cache',
+        ...llmHeaders(request),
       },
     });
     
