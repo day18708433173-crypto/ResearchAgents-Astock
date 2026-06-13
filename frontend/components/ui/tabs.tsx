@@ -11,7 +11,7 @@ const Tabs = React.forwardRef<
     onValueChange?: (value: string) => void
     className?: string
   }
->(({ className, defaultValue, value, onValueChange, ...props }, ref) => {
+>(({ defaultValue, value, onValueChange, ...props }) => {
   const [selectedValue, setSelectedValue] = React.useState(defaultValue || "")
   
   const handleChange = (newValue: string) => {

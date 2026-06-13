@@ -67,10 +67,12 @@ async def _startup_init():
 
 
 # ── 路由注册（注意：各 router 内部已保证静态路由在动态路由之前）──
-from backend.routers import stock, dossier, strategy, transaction, debate
+from backend.routers import stock, dossier, strategy, transaction, debate, workspace, stats
 
 app.include_router(stock.router)
 app.include_router(dossier.router)
 app.include_router(strategy.router)
 app.include_router(transaction.router)
 app.include_router(debate.router)
+app.include_router(workspace.router)
+app.include_router(stats.router)

@@ -94,7 +94,7 @@ def build_queries_for_mode(
     """Construct retrieval queries based on the retrieval mode and context.
 
     Args:
-        mode: One of 'pre_debate', 'claim_verification', 'literacy', 'history'
+        mode: One of 'pre_debate', 'claim_verification', 'literacy', 'industry'
         ticker: Stock ticker code (e.g., "600519.SH")
         data_card: The data card dict (for pre_debate enrichment)
         debate_text: Full debate transcript (for claim verification)
@@ -122,10 +122,6 @@ def build_queries_for_mode(
     elif mode == "literacy":
         # Find concept definitions for financial literacy Q&A
         queries = [f"金融概念：{claim}"]
-
-    elif mode == "history":
-        # Find similar past debates
-        queries = [f"{code} 辩论 多空"]
 
     elif mode == "industry":
         # Industry-specific queries

@@ -29,28 +29,58 @@ export function ReturnCurveChart({ points }: ReturnCurveChartProps) {
   });
 
   const zeroY = height - ((0 - min) / range) * (height - 4) - 2;
+  const areaPoints = `0,${zeroY} ${coords.join(" ")} ${width},${zeroY}`;
+  const lastPoint = points[points.length - 1];
+  const lastReturn = lastPoint?.total_return ?? 0;
 
   return (
     <div>
+      <div className="mb-3 flex items-center justify-between gap-3">
+        <div>
+          <div className="text-xs text-[var(--jh-text-muted)]">累计收益</div>
+          <div className={`text-lg font-semibold numeric ${lastReturn >= 0 ? "text-[var(--jh-accent)]" : "text-[var(--jh-danger)]"}`}>
+            {lastReturn >= 0 ? "+" : ""}¥{Math.round(lastReturn).toLocaleString()}
+          </div>
+        </div>
+        <div className="text-right text-xs text-[var(--jh-text-muted)]">
+          <div>区间高点 ¥{Math.round(max).toLocaleString()}</div>
+          <div>区间低点 ¥{Math.round(min).toLocaleString()}</div>
+        </div>
+      </div>
       <svg
         viewBox={`0 0 ${width} ${height}`}
-        className="w-full h-32"
+        className="w-full h-40"
         preserveAspectRatio="none"
         role="img"
         aria-label="累计收益曲线"
       >
+        {[12, 24, 36].map((y) => (
+          <line
+            key={y}
+            x1="0"
+            y1={y}
+            x2={width}
+            y2={y}
+            stroke="rgba(255,255,255,0.06)"
+            strokeWidth="0.2"
+          />
+        ))}
         <line
           x1="0"
           y1={zeroY}
           x2={width}
           y2={zeroY}
-          stroke="rgba(255,255,255,0.1)"
-          strokeWidth="0.3"
+          stroke="rgba(255,255,255,0.16)"
+          strokeWidth="0.35"
+        />
+        <polygon
+          fill={lastReturn >= 0 ? "rgba(143,212,195,0.10)" : "rgba(223,95,95,0.10)"}
+          points={areaPoints}
         />
         <polyline
           fill="none"
-          stroke="var(--jh-accent)"
-          strokeWidth="0.8"
+          stroke={lastReturn >= 0 ? "var(--jh-accent)" : "var(--jh-danger)"}
+          strokeWidth="0.65"
           points={coords.join(" ")}
         />
       </svg>

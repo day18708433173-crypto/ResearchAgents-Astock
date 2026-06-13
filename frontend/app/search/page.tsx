@@ -1,15 +1,15 @@
 "use client";
 
-import { Suspense, useState, useEffect } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { Suspense, useEffect, useState } from "react";
 import Link from "next/link";
-import { Search, TrendingUp, ChevronRight, Building2, Loader2, AlertCircle } from "lucide-react";
-import { searchStocks, StockSearchResult } from "@/lib/api";
+import { useRouter, useSearchParams } from "next/navigation";
+import { AlertCircle, ArrowRight, Building2, Loader2, Search } from "lucide-react";
+import { searchStocks, type StockSearchResult } from "@/lib/api";
 
 function SearchFallback() {
   return (
-    <div className="min-h-[50vh] bg-[var(--jh-bg)] flex items-center justify-center">
-      <Loader2 className="w-6 h-6 animate-spin text-[var(--jh-accent)]" />
+    <div className="min-h-[50vh] flex items-center justify-center bg-[var(--jh-bg)]">
+      <Loader2 className="w-5 h-5 animate-spin text-[var(--jh-text-muted)]" />
     </div>
   );
 }
@@ -34,23 +34,22 @@ function SearchPageContent() {
   const [error, setError] = useState("");
 
   useEffect(() => {
-    if (initialQuery) {
-      doSearch(initialQuery);
-    }
+    if (initialQuery) void doSearch(initialQuery);
   }, [initialQuery]);
 
   const doSearch = async (q: string) => {
-    if (!q.trim()) return;
+    const trimmed = q.trim();
+    if (!trimmed) return;
     setLoading(true);
     setSearched(true);
     setError("");
-    router.replace(`/search?q=${encodeURIComponent(q.trim())}`, { scroll: false });
+    router.replace(`/search?q=${encodeURIComponent(trimmed)}`, { scroll: false });
     try {
-      const data = await searchStocks(q.trim());
+      const data = await searchStocks(trimmed);
       setResults(data || []);
     } catch {
       setResults([]);
-      setError("搜索失败，请检查网络连接后重试");
+      setError("搜索失败，请检查数据服务后重试");
     } finally {
       setLoading(false);
     }
@@ -58,97 +57,108 @@ function SearchPageContent() {
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    doSearch(query);
+    void doSearch(query);
   };
 
   return (
-    <div className="min-h-screen bg-[var(--jh-bg)]">
-      <div className="max-w-2xl mx-auto px-4 sm:px-6 pt-8 pb-16">
-        <h1 className="text-xl font-bold text-[var(--jh-text)] mb-6">股票搜索</h1>
+    <div className="min-h-[calc(100vh-3.5rem)] bg-[var(--jh-bg)]">
+      <div className="mx-auto max-w-5xl px-4 sm:px-6 py-6">
+        <div className="mb-5">
+          <div className="text-xs uppercase tracking-[0.18em] text-[var(--jh-text-muted)]">Command Search</div>
+          <h1 className="mt-2 text-2xl font-semibold text-[var(--jh-text)]">打开研究对象</h1>
+          <p className="mt-1 text-sm text-[var(--jh-text-secondary)]">
+            按名称或代码定位 A 股标的，进入研究台后建立观点、策略和复盘记录。
+          </p>
+        </div>
 
-        <form onSubmit={handleSubmit} className="mb-8">
-          <div className="relative group">
-            <div className="absolute -inset-0.5 bg-gradient-to-r from-[var(--jh-accent)]/20 to-[var(--jh-info)]/20 rounded-[var(--jh-radius-lg)] blur opacity-0 group-focus-within:opacity-100 transition-opacity duration-300" />
-            <div className="relative flex flex-col sm:flex-row items-stretch sm:items-center glass-card-accent px-1 py-1 gap-1">
-              <div className="flex items-center flex-1 min-w-0">
-                <Search className="w-5 h-5 text-[var(--jh-text-muted)] ml-4 flex-shrink-0" />
-                <input
-                  type="text"
-                  value={query}
-                  onChange={(e) => setQuery(e.target.value)}
-                  placeholder="输入股票名称或代码搜索..."
-                  className="flex-1 bg-transparent border-none outline-none text-[var(--jh-text)] placeholder:text-[var(--jh-text-muted)] px-3 py-3 text-sm min-w-0"
-                  autoFocus
-                  aria-label="搜索股票"
-                />
-              </div>
-              <button type="submit" className="jh-btn-primary flex items-center justify-center gap-1.5 px-5 py-2.5 text-sm mx-1">
-                {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Search className="w-4 h-4" />}
-                搜索
-              </button>
-            </div>
+        <form onSubmit={handleSubmit} className="terminal-panel-strong mb-5 p-3">
+          <div className="flex items-center gap-3">
+            <Search className="w-5 h-5 text-[var(--jh-text-muted)]" />
+            <input
+              type="text"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="例如：贵州茅台、600519、宁德时代"
+              className="min-w-0 flex-1 bg-transparent text-base text-[var(--jh-text)] placeholder:text-[var(--jh-text-muted)] outline-none"
+              autoFocus
+              aria-label="搜索股票"
+            />
+            <button type="submit" className="jh-btn-primary h-9 px-4 text-sm" disabled={loading}>
+              {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : "搜索"}
+            </button>
           </div>
         </form>
 
-        {loading ? (
-          <div className="space-y-3">
-            {[1, 2, 3].map((i) => (
-              <div key={i} className="glass-card p-5">
-                <div className="skeleton h-5 w-32 mb-2" />
-                <div className="skeleton h-4 w-48" />
-              </div>
-            ))}
+        <section className="terminal-panel overflow-hidden">
+          <div className="flex items-center justify-between border-b border-[var(--jh-border)] px-4 py-3">
+            <div>
+              <h2 className="text-sm font-semibold text-[var(--jh-text)]">匹配结果</h2>
+              <p className="text-xs text-[var(--jh-text-muted)]">
+                {searched ? `找到 ${results.length} 个结果` : "等待输入查询"}
+              </p>
+            </div>
           </div>
-        ) : error ? (
-          <div className="glass-card p-12 text-center">
-            <AlertCircle className="w-10 h-10 text-[var(--jh-danger)] mx-auto mb-3 opacity-60" />
-            <p className="text-[var(--jh-text-secondary)] text-sm">{error}</p>
-            <button type="button" onClick={() => doSearch(query)} className="jh-btn-primary mt-4 text-sm px-4 py-2">
-              重试
-            </button>
-          </div>
-        ) : searched && results.length === 0 ? (
-          <div className="glass-card p-12 text-center">
-            <Building2 className="w-10 h-10 text-[var(--jh-text-muted)] mx-auto mb-3 opacity-40" />
-            <p className="text-[var(--jh-text-secondary)] text-sm">未找到匹配的股票</p>
-            <p className="text-[var(--jh-text-muted)] text-xs mt-1">尝试使用股票代码或完整名称搜索</p>
-          </div>
-        ) : results.length > 0 ? (
-          <div className="space-y-3 animate-fade-in-up">
-            <p className="text-xs text-[var(--jh-text-muted)] mb-4">找到 {results.length} 个结果</p>
-            {results.map((stock, i) => (
-              <Link
-                key={stock.ts_code}
-                href={`/brainstorm?ticker=${encodeURIComponent(stock.ts_code)}&name=${encodeURIComponent(stock.name)}`}
-                className="glass-card p-5 block group"
-                style={{ animationDelay: `${i * 0.05}s` }}
-              >
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-4">
-                    <div className="w-10 h-10 rounded-lg bg-[var(--jh-accent-dim)] flex items-center justify-center border border-[var(--jh-border-accent)] flex-shrink-0">
-                      <TrendingUp className="w-5 h-5 text-[var(--jh-accent)]" />
-                    </div>
-                    <div>
-                      <div className="flex items-center gap-2">
-                        <h3 className="text-base font-semibold text-[var(--jh-text)] group-hover:text-[var(--jh-accent)] transition-colors">
-                          {stock.name}
-                        </h3>
-                        <span className="text-xs text-[var(--jh-text-muted)] font-mono">{stock.ts_code}</span>
-                      </div>
-                      <div className="flex items-center gap-3 mt-1">
-                        {stock.industry && <span className="jh-badge jh-badge-info text-xs">{stock.industry}</span>}
-                        {stock.price != null && (
-                          <span className="text-sm text-[var(--jh-text-secondary)] font-mono">¥{stock.price.toFixed(2)}</span>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                  <ChevronRight className="w-5 h-5 text-[var(--jh-text-muted)] group-hover:text-[var(--jh-accent)] group-hover:translate-x-1 transition-all" />
-                </div>
-              </Link>
-            ))}
-          </div>
-        ) : null}
+
+          {loading ? (
+            <div className="p-4 space-y-2">
+              {[1, 2, 3].map((item) => (
+                <div key={item} className="skeleton h-11 w-full" />
+              ))}
+            </div>
+          ) : error ? (
+            <div className="p-8 text-center">
+              <AlertCircle className="mx-auto mb-3 w-8 h-8 text-[var(--jh-danger)]" />
+              <p className="text-sm text-[var(--jh-text-secondary)]">{error}</p>
+              <button type="button" onClick={() => void doSearch(query)} className="jh-btn-secondary mt-4 px-4 py-2 text-sm">
+                重试
+              </button>
+            </div>
+          ) : searched && results.length === 0 ? (
+            <div className="p-10 text-center">
+              <Building2 className="mx-auto mb-3 w-8 h-8 text-[var(--jh-text-muted)]" />
+              <p className="text-sm text-[var(--jh-text-secondary)]">未找到匹配股票</p>
+              <p className="mt-1 text-xs text-[var(--jh-text-muted)]">尝试使用完整股票名称或六位代码。</p>
+            </div>
+          ) : results.length > 0 ? (
+            <div className="overflow-x-auto">
+              <table className="data-table">
+                <thead>
+                  <tr>
+                    <th>标的</th>
+                    <th>代码</th>
+                    <th>行业</th>
+                    <th>参考价</th>
+                    <th>动作</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {results.map((stock) => (
+                    <tr key={stock.ts_code}>
+                      <td>
+                        <div className="font-medium text-[var(--jh-text)]">{stock.name}</div>
+                      </td>
+                      <td className="font-mono text-xs">{stock.ts_code}</td>
+                      <td>{stock.industry || "-"}</td>
+                      <td className="numeric">{stock.price != null ? `¥${stock.price.toFixed(2)}` : "-"}</td>
+                      <td>
+                        <Link
+                          href={`/brainstorm?ticker=${encodeURIComponent(stock.ts_code)}&name=${encodeURIComponent(stock.name)}`}
+                          className="inline-flex items-center gap-1 text-xs text-[var(--jh-accent)] hover:text-[var(--jh-accent-2)]"
+                        >
+                          进入研究台 <ArrowRight className="w-3.5 h-3.5" />
+                        </Link>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <div className="p-8 text-sm text-[var(--jh-text-muted)]">
+              输入标的名称或代码后，结果将在这里以表格形式展示。
+            </div>
+          )}
+        </section>
       </div>
     </div>
   );

@@ -50,6 +50,32 @@ export async function getDossierDetail(dossierId: number): Promise<DossierDetail
   return res.json();
 }
 
+/** 按股票代码获取卷宗（不存在时返回 404） */
+export async function getDossierByStock(stockCode: string): Promise<Dossier> {
+  const res = await fetch(`${API_BASE}/api/dossier/by-stock/${encodeURIComponent(stockCode)}`);
+  if (!res.ok) throw new Error("卷宗不存在");
+  return res.json();
+}
+
+/** 保存研究笔记到股票卷宗；卷宗不存在时后端会自动创建 */
+export async function updateResearchNote(
+  stockCode: string,
+  tickerName: string,
+  researchNote: string
+): Promise<Dossier> {
+  const res = await fetch(`${API_BASE}/api/dossier/research-note`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      stock_code: stockCode,
+      ticker_name: tickerName,
+      research_note: researchNote,
+    }),
+  });
+  if (!res.ok) throw new Error("保存研究笔记失败");
+  return res.json();
+}
+
 export interface DossierDetailResponse {
   dossier: Dossier;
   strategies: StrategyVersion[];
@@ -74,6 +100,14 @@ export interface PositionSummary {
   commission_min?: number;
   commission_rate?: number;
   commission_rate_label?: string;
+  current_price?: number;
+  market_value?: number;
+  unrealized_profit?: number;
+  unrealized_profit_pct?: number;
+  holding_return_pct?: number;
+  price_source?: string;
+  price_updated_at?: string;
+  price_unavailable?: boolean;
 }
 
 // ═══════════════════════════════════════════════
@@ -171,6 +205,11 @@ export interface ReturnCurveResponse {
     commission_min?: number;
     commission_rate?: number;
     commission_rate_label?: string;
+    current_price?: number;
+    market_value?: number;
+    unrealized_profit_pct?: number;
+    holding_return_pct?: number;
+    price_updated_at?: string;
   };
 }
 
@@ -194,6 +233,25 @@ export function isCommissionConfigured(dossier: {
   commission_rate?: number | null;
 }): boolean {
   return dossier.commission_min != null && dossier.commission_rate != null;
+}
+
+/** 获取卷宗实时持仓 */
+export async function getDossierPosition(dossierId: number): Promise<{
+  dossier_id: number;
+  stock_code: string;
+  stock_name: string;
+  position_summary: PositionSummary;
+}> {
+  const res = await fetch(`${API_BASE}/api/dossier/${dossierId}/position`);
+  if (!res.ok) throw new Error("获取实时持仓失败");
+  return res.json();
+}
+
+/** 投资组合全局概览 */
+export async function getPortfolioSummary(): Promise<import("@/types").PortfolioSummary> {
+  const res = await fetch(`${API_BASE}/api/portfolio/summary`);
+  if (!res.ok) throw new Error("获取投资组合概览失败");
+  return res.json();
 }
 
 /** 获取收益曲线 */
@@ -299,5 +357,48 @@ export async function askKnowledge(request: KnowledgeRequest): Promise<Knowledge
     const detail = typeof err.detail === "string" ? err.detail : "金融科普请求失败";
     throw new Error(detail);
   }
+  return res.json();
+}
+
+// ═══════════════════════════════════════════════
+// 投研工作台
+// ═══════════════════════════════════════════════
+
+export type {
+  MarketPulse,
+  DecisionQuality,
+  WorkspaceOverview,
+  WorkspaceQueueItem,
+  StaleAlertItem,
+  BlindSpotInsight,
+  PortfolioSummary,
+  StrategyAlertItem,
+} from "@/types";
+
+/** 今日 A 股市场脉冲 */
+export async function getMarketPulse(): Promise<import("@/types").MarketPulse> {
+  const res = await fetch(`${API_BASE}/api/market/pulse`);
+  if (!res.ok) throw new Error("获取市场脉冲失败");
+  return res.json();
+}
+
+/** 决策质量得分 */
+export async function getDecisionQuality(): Promise<import("@/types").DecisionQuality> {
+  const res = await fetch(`${API_BASE}/api/stats/decision-quality`);
+  if (!res.ok) throw new Error("获取决策质量失败");
+  return res.json();
+}
+
+/** 工作台聚合数据（研究队列 + 过期预警 + 盲点雷达） */
+export async function getWorkspaceOverview(): Promise<import("@/types").WorkspaceOverview> {
+  const res = await fetch(`${API_BASE}/api/workspace/overview`);
+  if (!res.ok) throw new Error("获取工作台数据失败");
+  return res.json();
+}
+
+/** 观点过期预警 */
+export async function getStaleAlerts(): Promise<import("@/types").StaleAlerts> {
+  const res = await fetch(`${API_BASE}/api/workspace/stale-alerts`);
+  if (!res.ok) throw new Error("获取观点过期预警失败");
   return res.json();
 }

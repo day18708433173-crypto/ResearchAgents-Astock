@@ -16,8 +16,8 @@ const geistMono = localFont({
 });
 
 export const metadata: Metadata = {
-  title: "镜衡 · 照见盲点，衡定策略",
-  description: "AI辩论暴露逻辑盲点，策略教练引导形成量化策略，卷宗系统让每笔交易有据可循。",
+  title: "镜衡 · 投研工作台",
+  description: "面向长期跟踪的投资研究工作台，沉淀多空证据、策略版本、交易记录与复盘结论。",
 };
 
 export default function RootLayout({
@@ -27,7 +27,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="zh-CN" className="dark">
-      <body className={`${geistSans.variable} ${geistMono.variable} antialiased bg-[#0B0F14] text-[#eef2ff]`}>
+      <body className={`${geistSans.variable} ${geistMono.variable} antialiased bg-[#080A0D] text-[#e7eaee]`}>
         <Providers>{children}</Providers>
       </body>
     </html>

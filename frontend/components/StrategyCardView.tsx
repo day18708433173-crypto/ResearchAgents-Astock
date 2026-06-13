@@ -7,13 +7,23 @@ interface StrategyCardViewProps {
   compact?: boolean;
 }
 
-function isTrailingChitchatLine(line: string): boolean {
+function isCoachChitchatLine(line: string): boolean {
   const s = line.trim();
   if (!s) return false;
+  if (/^\d+\.\s/.test(s)) return true;
   if (s.endsWith("？") || s.endsWith("?")) return true;
+  const keywords = [
+    "以上就是", "初步策略", "继续深挖", "路线图", "随时保存",
+    "告诉我你想", "往哪个方向", "探讨几件事", "操作参考",
+  ];
+  if (keywords.some((k) => s.includes(k))) return true;
+  if (s.endsWith("：") || s.endsWith(":")) {
+    const colonPrefixes = ["如果", "接下来", "欢迎", "你可以", "告诉", "以上", "想"];
+    if (colonPrefixes.some((p) => s.startsWith(p))) return true;
+  }
   const prefixes = [
     "还有什么", "欢迎", "如果", "你可以", "需要我", "随时", "接下来",
-    "以上", "希望这", "请告诉我", "想深入讨论", "可以继续追问",
+    "以上", "希望这", "请告诉我", "想深入讨论", "可以继续追问", "告诉我",
   ];
   return prefixes.some((p) => s.startsWith(p));
 }
@@ -29,10 +39,11 @@ export function extractCurrentStrategyBlock(text: string): string {
     const kept: string[] = [];
     for (let i = 0; i < lines.length; i++) {
       if (i > 0 && lines[i].startsWith("## ") && !lines[i].startsWith("### ")) break;
+      if (i > 0 && isCoachChitchatLine(lines[i])) break;
       kept.push(lines[i]);
     }
     while (kept.length && !kept[kept.length - 1].trim()) kept.pop();
-    while (kept.length && isTrailingChitchatLine(kept[kept.length - 1])) {
+    while (kept.length && isCoachChitchatLine(kept[kept.length - 1])) {
       kept.pop();
       while (kept.length && !kept[kept.length - 1].trim()) kept.pop();
     }
@@ -77,7 +88,7 @@ export function StrategyCardView({ content, compact = false }: StrategyCardViewP
   }
 
   return (
-    <div className="p-4 rounded-lg border border-[var(--jh-accent)]/25 bg-[rgba(99,230,208,0.06)]">
+    <div className="p-4 rounded-md border border-[var(--jh-border)] bg-[var(--jh-bg-2)]">
       <p
         className={`text-[var(--jh-text-secondary)] leading-relaxed whitespace-pre-wrap ${
           compact ? "text-xs line-clamp-6" : "text-sm"

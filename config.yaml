@@ -44,7 +44,6 @@ rag:
     industry_benchmark_ttl_hours: 168   # 7天
     announcement_ttl_hours: 6           # 6小时
     financial_report_ttl_hours: 24      # 24小时
-    debate_history_ttl_hours: -1        # 已禁用辩论历史索引
     concept_definition_ttl_hours: -1    # 永久
   # 预索引 (启动时)
   pre_index:

@@ -49,7 +49,8 @@ def _strip_html(text: str) -> str:
 
 def run_debate(ticker: str, ticker_name: str = "",
                decision_context: dict = None,
-               existing_debate_id: int = None) -> dict:
+               existing_debate_id: int = None,
+               focus_question: str = "") -> dict:
     """执行完整辩论流程（同步模式）。
 
     Args:
@@ -109,7 +110,7 @@ def run_debate(ticker: str, ticker_name: str = "",
     for r in range(1, max_rounds + 1):
         # Bull 发言
         try:
-            sys_bull, user_bull = build_debate_prompt("bull", card, bear_msg, r, rag_context)
+            sys_bull, user_bull = build_debate_prompt("bull", card, bear_msg, r, rag_context, focus_question)
             bull_msg = _strip_html(chat(user_bull, system=sys_bull, scenario="debate"))
             result["total_llm_calls"] += 1
             result["estimated_cost"] += cost_per_call
@@ -118,7 +119,7 @@ def run_debate(ticker: str, ticker_name: str = "",
 
         # Bear 发言
         try:
-            sys_bear, user_bear = build_debate_prompt("bear", card, bull_msg, r, rag_context)
+            sys_bear, user_bear = build_debate_prompt("bear", card, bull_msg, r, rag_context, focus_question)
             bear_msg = _strip_html(chat(user_bear, system=sys_bear, scenario="debate"))
             result["total_llm_calls"] += 1
             result["estimated_cost"] += cost_per_call
@@ -160,6 +161,7 @@ def run_debate(ticker: str, ticker_name: str = "",
             fact_check=fact_result,
             rag_context=rag_context,
             data_card=card,
+            focus_question=focus_question,
         )
         judge_raw = chat(judge_usr, system=judge_sys)
         result["total_llm_calls"] += 1
@@ -201,9 +203,6 @@ def run_debate(ticker: str, ticker_name: str = "",
     else:
         result["debate_id"] = _save_debate_log(result)
 
-    # 辩论历史不再索引到 RAG 库（保留在关系数据库 debate_record 表中用于用户查看）
-    # 原因：辩论历史是结构化对话数据，不适合向量检索；历史观点可能过时；避免 Agent 过度依赖历史观点
-
     return result
 
 
@@ -211,7 +210,7 @@ def run_debate(ticker: str, ticker_name: str = "",
 #  流式辩论模式（SSE）
 # ═══════════════════════════════════════════════
 
-def stream_debate(ticker: str, ticker_name: str = "") -> Generator[dict, None, None]:
+def stream_debate(ticker: str, ticker_name: str = "", focus_question: str = "") -> Generator[dict, None, None]:
     """流式辩论（实时推送每轮发言）
 
     Yields:
@@ -274,7 +273,7 @@ def stream_debate(ticker: str, ticker_name: str = "") -> Generator[dict, None, N
         # Bull发言（token 级流式）
         yield {"type": "status", "message": f"多头第{r}轮发言..."}
         try:
-            sys_bull, user_bull = build_debate_prompt("bull", card, bear_msg, r, rag_context)
+            sys_bull, user_bull = build_debate_prompt("bull", card, bear_msg, r, rag_context, focus_question)
             bull_raw = ""
             for token in stream_chat(user_bull, system=sys_bull, scenario="debate"):
                 bull_raw += token
@@ -290,7 +289,7 @@ def stream_debate(ticker: str, ticker_name: str = "") -> Generator[dict, None, N
         # Bear发言（token 级流式）
         yield {"type": "status", "message": f"空头第{r}轮发言..."}
         try:
-            sys_bear, user_bear = build_debate_prompt("bear", card, bull_msg, r, rag_context)
+            sys_bear, user_bear = build_debate_prompt("bear", card, bull_msg, r, rag_context, focus_question)
             bear_raw = ""
             for token in stream_chat(user_bear, system=sys_bear, scenario="debate"):
                 bear_raw += token
@@ -318,6 +317,7 @@ def stream_debate(ticker: str, ticker_name: str = "") -> Generator[dict, None, N
             ticker, ticker_name, result["rounds"],
             rag_context=rag_context,
             data_card=card,
+            focus_question=focus_question,
         )
         judge_raw = chat(judge_usr, system=judge_sys)
         result["total_llm_calls"] += 1

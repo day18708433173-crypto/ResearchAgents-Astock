@@ -3,55 +3,47 @@
 @tailwind utilities;
 
 /* ============================================
-   镜衡 - 深色科技金融风 全局样式
-   原型设计变量迁移
+   镜衡 - 专业投研工作台设计系统
    ============================================ */
 
 :root {
-  /* === 品牌色（青色为主色，代表多头/机会） === */
-  --color-primary:              #63e6d0;
-  --color-primary-container:    rgba(99, 230, 208, 0.15);
-  --color-on-primary:           #0b0f14;
+  --color-primary:              #8fd4c3;
+  --color-primary-container:    rgba(143, 212, 195, 0.10);
+  --color-on-primary:           #07100d;
   
-  /* === 背景 / 表面（深色主题） === */
-  --color-background:                 #0b0f14;
-  --color-surface-container-lowest:   #0d1117;
-  --color-surface:                    rgba(17, 22, 34, 0.92);
-  --color-surface-container:          rgba(255, 255, 255, 0.04);
-  --color-surface-container-high:     rgba(255, 255, 255, 0.08);
-  --color-surface-container-highest:  rgba(255, 255, 255, 0.12);
+  --color-background:                 #080a0d;
+  --color-surface-container-lowest:   #0b0e12;
+  --color-surface:                    #11161d;
+  --color-surface-container:          #151b23;
+  --color-surface-container-high:     #1a212b;
+  --color-surface-container-highest:  #222a35;
   
-  /* === 文字 === */
-  --color-on-surface:           #eef2ff;
-  --color-on-surface-variant:   #95a3bc;
-  --color-on-surface-weak:      #5c6a82;
+  --color-on-surface:           #e7eaee;
+  --color-on-surface-variant:   #a0a8b2;
+  --color-on-surface-weak:      #68717d;
   
-  /* === 功能色 === */
-  --color-success:    #63e6d0;
-  --color-error:      #ff7a7a;
-  --color-warning:    #f5c451;
-  --color-info:       #7cb8ff;
+  --color-success:    #48b57a;
+  --color-error:      #df5f5f;
+  --color-warning:    #caa45a;
+  --color-info:       #86a7d5;
   
-  /* === 边框 === */
-  --color-outline:          rgba(255, 255, 255, 0.14);
-  --color-outline-variant:  rgba(255, 255, 255, 0.08);
-  --color-outline-accent:   rgba(99, 230, 208, 0.2);
+  --color-outline:          #303946;
+  --color-outline-variant:  #252d38;
+  --color-outline-accent:   rgba(143, 212, 195, 0.28);
   
-  /* === 圆角 === */
-  --radius-sm:   0.375rem;
-  --radius-md:   0.625rem;
-  --radius-lg:   0.875rem;
-  --radius-xl:   1.25rem;
-  --radius-2xl:  1.5rem;
+  --radius-sm:   0.25rem;
+  --radius-md:   0.375rem;
+  --radius-lg:   0.5rem;
+  --radius-xl:   0.625rem;
+  --radius-2xl:  0.75rem;
   --radius-full: 9999px;
   
-  /* === 阴影（深色主题阴影更深） === */
-  --shadow-sm:     0 1px 2px rgba(0, 0, 0, 0.3);
-  --shadow-card:   0 4px 12px rgba(0, 0, 0, 0.4);
-  --shadow-float:  0 8px 32px rgba(0, 0, 0, 0.5);
-  --shadow-dialog: 0 25px 50px rgba(0, 0, 0, 0.6);
-  --shadow-glow:   0 0 20px rgba(99, 230, 208, 0.08);
-  --shadow-glow-lg: 0 0 40px rgba(99, 230, 208, 0.12);
+  --shadow-sm:     0 1px 2px rgba(0, 0, 0, 0.30);
+  --shadow-card:   none;
+  --shadow-float:  0 12px 36px rgba(0, 0, 0, 0.35);
+  --shadow-dialog: 0 24px 52px rgba(0, 0, 0, 0.55);
+  --shadow-glow:   none;
+  --shadow-glow-lg: none;
   
   /* === 字体 === */
   --font-sans: var(--font-geist-sans, "Inter"), "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
@@ -78,7 +70,7 @@
 
   /* === 兼容别名（旧版变量名） === */
   --jh-bg:              var(--color-background);
-  --jh-bg-2:            #101620;
+  --jh-bg-2:            var(--color-surface-container-lowest);
   --jh-surface:         var(--color-surface);
   --jh-text:            var(--color-on-surface);
   --jh-text-secondary:  var(--color-on-surface-variant);
@@ -86,14 +78,14 @@
   --jh-muted:           var(--color-on-surface-variant);
   --jh-weak:            var(--color-on-surface-weak);
   --jh-accent:          var(--color-primary);
-  --jh-accent-2:        #4fd4be;
+  --jh-accent-2:        #a4dece;
   --jh-accent-dim:      var(--color-primary-container);
   --jh-danger:          var(--color-error);
   --jh-warm:            var(--color-warning);
   --jh-warning:         var(--color-warning);
-  --jh-warning-dim:     rgba(245, 196, 81, 0.12);
+  --jh-warning-dim:     rgba(202, 164, 90, 0.12);
   --jh-info:            var(--color-info);
-  --jh-info-dim:        rgba(124, 184, 255, 0.12);
+  --jh-info-dim:        rgba(134, 167, 213, 0.12);
   --jh-line:            var(--color-outline-variant);
   --jh-line-strong:     var(--color-outline);
   --jh-border:          var(--color-outline-variant);
@@ -115,7 +107,9 @@ html {
 }
 
 body {
-  background: var(--color-background);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.015), transparent 280px),
+    var(--color-background);
   min-height: 100vh;
 }
 
@@ -137,7 +131,7 @@ body {
 
 /* 选中文字 */
 ::selection {
-  background: rgba(99, 230, 208, 0.2);
+  background: rgba(143, 212, 195, 0.22);
   color: var(--color-on-surface);
 }
 
@@ -145,16 +139,16 @@ body {
    通用组件类
    ============================================ */
 
-/* 玻璃卡片 */
+/* 工作台面板 */
 .glass-card {
   background: var(--color-surface);
-  backdrop-filter: blur(16px);
   border: 1px solid var(--color-outline-variant);
-  transition: all 0.2s ease;
+  border-radius: var(--radius-lg);
+  transition: border-color 0.15s ease, background-color 0.15s ease;
 }
 .glass-card:hover {
   border-color: var(--color-outline);
-  box-shadow: var(--shadow-card), var(--shadow-glow);
+  box-shadow: none;
 }
 
 /* 多头观点卡片 */
@@ -181,7 +175,7 @@ body {
 }
 
 .markdown-content strong {
-  color: var(--color-primary);
+  color: var(--color-on-surface);
   font-weight: 600;
 }
 
@@ -238,8 +232,8 @@ body {
 }
 
 .markdown-content th {
-  background: var(--color-primary-container);
-  color: var(--color-primary);
+  background: var(--color-surface-container-high);
+  color: var(--color-on-surface);
   padding: 0.75rem;
   text-align: left;
   font-weight: 600;
@@ -253,7 +247,7 @@ body {
 }
 
 .markdown-content tr:hover td {
-  background: rgba(255, 255, 255, 0.04);
+  background: rgba(255, 255, 255, 0.03);
 }
 
 .markdown-content tr:nth-child(even) td {
@@ -314,8 +308,7 @@ body {
 /* 强调玻璃卡片 */
 .glass-card-accent {
   background: var(--color-surface);
-  backdrop-filter: blur(16px);
-  border: 1px solid var(--color-outline-accent);
+  border: 1px solid var(--color-outline);
   border-radius: var(--radius-lg);
 }
 
@@ -334,7 +327,7 @@ body {
 }
 .jh-btn-primary:hover:not(:disabled) {
   background: var(--jh-accent-2);
-  box-shadow: var(--shadow-glow);
+  box-shadow: none;
 }
 .jh-btn-primary:disabled {
   opacity: 0.5;
@@ -362,8 +355,8 @@ body {
 .jh-badge {
   display: inline-flex;
   align-items: center;
-  padding: 0.125rem 0.5rem;
-  border-radius: var(--radius-full);
+  padding: 0.125rem 0.375rem;
+  border-radius: var(--radius-sm);
   font-weight: 500;
   line-height: 1.4;
 }
@@ -382,14 +375,24 @@ body {
   color: var(--color-warning);
   border: 1px solid rgba(245, 196, 81, 0.25);
 }
+.jh-badge-negative {
+  background: rgba(223, 95, 95, 0.12);
+  color: var(--color-error);
+  border: 1px solid rgba(223, 95, 95, 0.25);
+}
+.jh-badge-muted {
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--color-on-surface-variant);
+  border: 1px solid var(--color-outline-variant);
+}
 
 /* 骨架屏 */
 .skeleton {
   background: linear-gradient(
     90deg,
-    rgba(255, 255, 255, 0.04) 25%,
-    rgba(255, 255, 255, 0.08) 50%,
-    rgba(255, 255, 255, 0.04) 75%
+    rgba(255, 255, 255, 0.035) 25%,
+    rgba(255, 255, 255, 0.075) 50%,
+    rgba(255, 255, 255, 0.035) 75%
   );
   background-size: 200% 100%;
   animation: skeleton-shimmer 1.5s ease-in-out infinite;
@@ -411,7 +414,7 @@ body {
 .coach-content strong,
 .knowledge-content strong,
 .markdown-content strong {
-  color: var(--color-primary);
+  color: var(--color-on-surface);
   font-weight: 600;
 }
 .debate-content h1, .debate-content h2, .debate-content h3,
@@ -444,8 +447,8 @@ body {
   font-size: 0.875rem;
 }
 .debate-content th, .coach-content th, .knowledge-content th, .markdown-content th {
-  background: var(--color-primary-container);
-  color: var(--color-primary);
+  background: var(--color-surface-container-high);
+  color: var(--color-on-surface);
   padding: 0.5rem;
   text-align: left;
   border-bottom: 1px solid var(--color-outline-variant);
@@ -454,4 +457,47 @@ body {
   padding: 0.5rem;
   border-bottom: 1px solid var(--color-outline-variant);
   color: var(--color-on-surface-variant);
+}
+
+.terminal-panel {
+  background: var(--color-surface);
+  border: 1px solid var(--color-outline-variant);
+  border-radius: var(--radius-lg);
+}
+
+.terminal-panel-strong {
+  background: var(--color-surface-container);
+  border: 1px solid var(--color-outline);
+  border-radius: var(--radius-lg);
+}
+
+.data-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.8125rem;
+}
+
+.data-table th {
+  height: 2.25rem;
+  padding: 0 0.75rem;
+  text-align: left;
+  color: var(--color-on-surface-weak);
+  font-weight: 500;
+  background: var(--color-surface-container-lowest);
+  border-bottom: 1px solid var(--color-outline-variant);
+}
+
+.data-table td {
+  height: 2.75rem;
+  padding: 0 0.75rem;
+  color: var(--color-on-surface-variant);
+  border-bottom: 1px solid var(--color-outline-variant);
+}
+
+.data-table tr:hover td {
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.numeric {
+  font-variant-numeric: tabular-nums;
 }

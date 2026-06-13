@@ -138,7 +138,9 @@ COACH_STRATEGY_BLOCK = """## 策略输出格式
 （需跟踪的指标或事件）
 
 ### 退出/风控条件
-（具体触发条件）"""
+（具体触发条件）
+
+**重要**：输出完「### 退出/风控条件」及其内容后立刻结束，禁止在策略块之后追加任何寒暄、总结、编号追问或引导语（例如「以上就是…初步策略」「如果你想继续深挖…」「告诉我你想往哪个方向走」等）。"""
 
 
 def _coach_system_for_state(state: str) -> str:
@@ -149,8 +151,7 @@ def _coach_system_for_state(state: str) -> str:
         parts.append("""## 本轮任务
 - 简短自我介绍，概述辩论核心发现
 - 结合数据卡与裁判裁决，用质量×价格框架输出 v1 初步策略（完整「## 当前策略」块）
-- 说明用户可随时保存当前策略，也可继续追问细化
-- 最后问用户想深入讨论哪个方面
+- 策略块之外不要写任何开场白或收尾引导；保存入口由界面提供
 - 若上方已有辩论记录，不要说"没有上传辩论数据"或类似表述""")
     elif state == "done":
         parts.append("""## 本轮任务
@@ -166,7 +167,7 @@ def _coach_system_for_state(state: str) -> str:
 - 仅当用户追问导致入场/持有/退出任一条件发生实质变化时，才输出更新后的「## 当前策略」块，并说明「策略已更新」
 - 若仅为概念解释、闲聊或与策略无关的问题，只回答问题，不输出策略块
 - 若信息不足无法更新策略，说明还需要哪类信息
-- 最后可给出 1～2 个可继续追问的方向""")
+- 更新策略块后同样禁止在块尾追加寒暄或编号追问""")
 
     parts.append("请用中文输出。语气温和专业。")
     return "\n\n".join(parts)
@@ -259,7 +260,8 @@ def build_coach_prompt(
 # ═══════════════════════════════════════════════
 
 def build_debate_prompt(role: str, data_card: dict, opponent_msg: str = "",
-                         round_num: int = 1, rag_context: dict = None) -> tuple[str, str]:
+                         round_num: int = 1, rag_context: dict = None,
+                         focus_question: str = "") -> tuple[str, str]:
     """构建辩论提示词
 
     Args:
@@ -268,6 +270,7 @@ def build_debate_prompt(role: str, data_card: dict, opponent_msg: str = "",
         opponent_msg: 对方上一轮发言
         round_num: 当前轮次编号
         rag_context: RAG检索增强上下文
+        focus_question: 用户指定的聚焦问题
     """
     card_text = _format_data_card(data_card)
 
@@ -278,6 +281,11 @@ def build_debate_prompt(role: str, data_card: dict, opponent_msg: str = "",
     else:
         raise ValueError(f"Unknown role: {role}")
 
+    # 聚焦问题注入 system prompt，确保最高优先级
+    fq = focus_question.strip() if focus_question else ""
+    if fq:
+        system = system + f"\n\n## 本次辩论的聚焦问题（最高优先级）\n用户希望辩论重点围绕：「{fq}」\n你的每一轮发言都必须直接回应这个问题，不能绕开。"
+
     user = f"## 数据卡\n{card_text}\n\n"
 
     # RAG 增强段落
@@ -287,16 +295,18 @@ def build_debate_prompt(role: str, data_card: dict, opponent_msg: str = "",
         if rag_section:
             user += f"{rag_section}\n\n"
 
-    # 辩论指令
+    # 辩论指令（在每轮末尾重复聚焦问题，防止被上文稀释）
+    focus_reminder = f"\n\n【必须回应】本轮发言中请直接针对聚焦问题「{fq}」给出你的核心论点。" if fq else ""
+
     if opponent_msg:
         if round_num == 1:
-            user += "## 第一轮：请发表你的开局立论\n\n这是多/空方的开局立论。请独立发表你的开局立论，不需要回应对方。"
+            user += f"## 第一轮：请发表你的开局立论\n\n这是多/空方的开局立论。请独立发表你的开局立论，不需要回应对方。{focus_reminder}"
         elif round_num == 2:
-            user += f"## 第二轮：请回应对方的观点\n\n对方上一轮发言：\n{opponent_msg}\n\n请针对对方的具体论点进行反驳或回应，指出对方论证中的漏洞或遗漏。"
+            user += f"## 第二轮：请回应对方的观点\n\n对方上一轮发言：\n{opponent_msg}\n\n请针对对方的具体论点进行反驳或回应，指出对方论证中的漏洞或遗漏。{focus_reminder}"
         else:
-            user += f"## 第三轮：最后陈述\n\n对方上一轮发言：\n{opponent_msg}\n\n请做最后陈述。追问对方回避的核心问题，同时总结你的核心立场。"
+            user += f"## 第三轮：最后陈述\n\n对方上一轮发言：\n{opponent_msg}\n\n请做最后陈述。追问对方回避的核心问题，同时总结你的核心立场。{focus_reminder}"
     else:
-        user += "## 第一轮：开局立论\n\n请发表你的开局立论，陈述你的核心观点。"
+        user += f"## 第一轮：开局立论\n\n请发表你的开局立论，陈述你的核心观点。{focus_reminder}"
 
     return system, user
 
@@ -323,7 +333,7 @@ def _format_judge_data_card(card: dict) -> str:
 
 def build_judge_prompt(ticker: str, name: str, rounds: list,
                         fact_check: dict = None, rag_context: dict = None,
-                        data_card: dict = None) -> tuple[str, str]:
+                        data_card: dict = None, focus_question: str = "") -> tuple[str, str]:
     """构建裁判提示词"""
     system = JUDGE_SYSTEM
 
@@ -334,6 +344,10 @@ def build_judge_prompt(ticker: str, name: str, rounds: list,
         rounds_text += f"**空头：** {r['bear']}\n\n"
 
     user = f"## 股票信息\n代码：{ticker}，名称：{name}\n\n"
+
+    if focus_question and focus_question.strip():
+        user += f"## 用户聚焦问题\n{focus_question.strip()}\n\n"
+        user += "裁决时须评估多空是否充分回应了该聚焦问题。\n\n"
 
     card_text = _format_judge_data_card(data_card)
     if card_text:

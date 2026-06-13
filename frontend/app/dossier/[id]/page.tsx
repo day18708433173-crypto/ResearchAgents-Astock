@@ -23,7 +23,9 @@ import {
   Loader2,
   Info,
   Trash2,
+  StickyNote,
 } from "lucide-react";
+import ResearchNoteEditor from "@/components/ResearchNoteEditor";
 import {
   getDossierDetail,
   createTransaction,
@@ -37,12 +39,11 @@ import {
   type ReturnCurveResponse,
 } from "@/lib/api";
 import type { DossierDetailResponse } from "@/lib/api";
-import type { Transaction } from "@/types";
 import { useToast } from "@/components/toast-provider";
 import { ReturnCurveChart } from "@/components/ReturnCurveChart";
 import { StrategyCardView, parseStrategyContent } from "@/components/StrategyCardView";
 
-type TabType = "overview" | "strategy" | "transactions";
+type TabType = "overview" | "strategy" | "transactions" | "notes";
 
 export default function DossierDetailPage() {
   const params = useParams();
@@ -185,8 +186,8 @@ export default function DossierDetailPage() {
         commission_rate_wan: txnForm.commission_rate_wan,
       });
       loadDetail();
-    } catch (e: any) {
-      const msg = e?.message || "创建交易记录失败";
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : "创建交易记录失败";
       setTxnError(msg.includes("超过") ? msg : "创建交易记录失败，请重试");
       console.error("创建交易记录失败", e);
     } finally {
@@ -198,7 +199,7 @@ export default function DossierDetailPage() {
     setDeleting(true);
     try {
       await deleteDossier(dossierId);
-      toast("卷宗已删除，可重新进入头脑风暴室记录", "success");
+      toast("卷宗已删除，可重新进入研究台记录", "success");
       router.push("/dossier");
     } catch {
       toast("删除卷宗失败，请重试", "error");
@@ -228,7 +229,7 @@ export default function DossierDetailPage() {
   if (loading) {
     return (
       <div className="min-h-screen bg-[var(--jh-bg)]">
-        <div className="max-w-4xl mx-auto px-4 sm:px-6 pt-8 space-y-4">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 pt-8 space-y-4">
           <div className="skeleton h-8 w-48" />
           <div className="glass-card p-6 space-y-3">
             <div className="skeleton h-5 w-full" />
@@ -272,7 +273,7 @@ export default function DossierDetailPage() {
     <div className="min-h-screen bg-[var(--jh-bg)]">
       {/* 顶部导航 */}
       <div className="sticky top-14 z-10 bg-[var(--jh-bg-2)] border-b border-[var(--jh-border)]">
-        <div className="max-w-4xl mx-auto px-4 sm:px-6 py-4 flex items-center justify-between gap-3">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 py-4 flex items-center justify-between gap-3">
           <button type="button" onClick={() => router.push("/dossier")} className="flex items-center gap-2 text-[var(--jh-text-secondary)] hover:text-[var(--jh-text)] transition-colors">
             <ArrowLeft className="w-5 h-5" /><span>返回</span>
           </button>
@@ -281,7 +282,7 @@ export default function DossierDetailPage() {
               type="button"
               onClick={() => handleExport("json")}
               disabled={exporting !== null}
-              className="flex items-center gap-1.5 text-xs text-[var(--jh-text-muted)] hover:text-[var(--jh-accent)] px-2 py-1.5 rounded-lg hover:bg-[rgba(255,255,255,0.04)] transition-colors"
+              className="flex items-center gap-1.5 text-xs text-[var(--jh-text-muted)] hover:text-[var(--jh-accent)] px-2 py-1.5 rounded-md hover:bg-[rgba(255,255,255,0.04)] transition-colors"
               aria-label="导出 JSON"
             >
               {exporting === "json" ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />}
@@ -291,7 +292,7 @@ export default function DossierDetailPage() {
               type="button"
               onClick={() => handleExport("csv")}
               disabled={exporting !== null}
-              className="flex items-center gap-1.5 text-xs text-[var(--jh-text-muted)] hover:text-[var(--jh-accent)] px-2 py-1.5 rounded-lg hover:bg-[rgba(255,255,255,0.04)] transition-colors"
+              className="flex items-center gap-1.5 text-xs text-[var(--jh-text-muted)] hover:text-[var(--jh-accent)] px-2 py-1.5 rounded-md hover:bg-[rgba(255,255,255,0.04)] transition-colors"
               aria-label="导出 CSV"
             >
               {exporting === "csv" ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />}
@@ -300,7 +301,7 @@ export default function DossierDetailPage() {
             <button
               type="button"
               onClick={() => setShowDeleteConfirm(true)}
-              className="flex items-center gap-1.5 text-xs text-[var(--jh-danger)] hover:bg-[rgba(255,122,122,0.1)] px-2 py-1.5 rounded-lg transition-colors"
+              className="flex items-center gap-1.5 text-xs text-[var(--jh-danger)] hover:bg-[rgba(223,95,95,0.1)] px-2 py-1.5 rounded-md transition-colors"
               aria-label="删除卷宗"
             >
               <Trash2 className="w-3.5 h-3.5" />
@@ -312,9 +313,9 @@ export default function DossierDetailPage() {
       </div>
 
       {/* 标题区域 */}
-      <div className="max-w-4xl mx-auto px-6 pt-6 pb-4">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 pt-6 pb-4">
         <div className="flex items-center gap-4 mb-4">
-          <div className="w-12 h-12 rounded-xl bg-[var(--jh-accent-dim)] flex items-center justify-center border border-[var(--jh-border-accent)]">
+          <div className="w-12 h-12 rounded-lg bg-[var(--jh-accent-dim)] flex items-center justify-center border border-[var(--jh-border-accent)]">
             <FileText className="w-6 h-6 text-[var(--jh-accent)]" />
           </div>
           <div>
@@ -332,6 +333,7 @@ export default function DossierDetailPage() {
             { key: "overview", label: "概览", icon: Target },
             { key: "strategy", label: "策略版本", icon: Layers },
             { key: "transactions", label: "交易记录", icon: Wallet },
+            { key: "notes", label: "研究笔记", icon: StickyNote },
           ].map((tab) => (
             <button
               key={tab.key}
@@ -352,12 +354,12 @@ export default function DossierDetailPage() {
       </div>
 
       {/* 内容区域 */}
-      <div className="max-w-4xl mx-auto px-6 pb-16">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 pb-16">
         {/* 概览 Tab */}
         {activeTab === "overview" && (
           <div className="space-y-6 animate-fade-in-up" role="tabpanel">
             {/* 收益计算规则说明 */}
-            <div className="glass-card p-4 border border-[var(--jh-border-accent)] bg-[rgba(99,230,208,0.04)]">
+            <div className="glass-card p-4 border border-[var(--jh-border-accent)] bg-[rgba(143,212,195,0.04)]">
               <div className="flex items-start gap-3">
                 <Info className="w-4 h-4 text-[var(--jh-accent)] mt-0.5 flex-shrink-0" />
                 <div className="text-xs text-[var(--jh-text-secondary)] leading-relaxed space-y-1.5">
@@ -371,7 +373,7 @@ export default function DossierDetailPage() {
                     <p>首次录入交易时需设置佣金参数，之后本卷宗所有交易按同一规则计费。</p>
                   )}
                   <p>买入成本计入佣金；卖出收入扣除佣金。印花税等其他费用忽略不计。</p>
-                  <p>收益率 = (已实现盈亏 + 未实现盈亏) ÷ 累计投入（含买入佣金）；未实现盈亏以最近一笔成交价估算。</p>
+                  <p>收益率 = (已实现盈亏 + 未实现盈亏) ÷ 累计投入（含买入佣金）；未实现盈亏基于实时市价估算。</p>
                 </div>
               </div>
             </div>
@@ -396,45 +398,87 @@ export default function DossierDetailPage() {
                   <BarChart3 className="w-5 h-5 text-[var(--jh-accent)]" />持仓概览
                 </h2>
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                  <div className="p-4 rounded-lg bg-[rgba(255,255,255,0.03)] border border-[var(--jh-border)]">
+                  <div className="p-4 rounded-md bg-[rgba(255,255,255,0.03)] border border-[var(--jh-border)]">
                     <div className="text-xs text-[var(--jh-text-muted)] mb-1">当前持仓</div>
                     <div className="text-lg font-bold text-[var(--jh-text)]">{position_summary.current_shares} 股</div>
                   </div>
-                  <div className="p-4 rounded-lg bg-[rgba(255,255,255,0.03)] border border-[var(--jh-border)]">
+                  {(position_summary.current_price ?? 0) > 0 && (
+                    <div className="p-4 rounded-md bg-[rgba(255,255,255,0.03)] border border-[var(--jh-border)]">
+                      <div className="text-xs text-[var(--jh-text-muted)] mb-1">当前价（实时）</div>
+                      <div className="text-lg font-bold text-[var(--jh-text)]">{formatMoney(position_summary.current_price!)}</div>
+                      {position_summary.price_updated_at && (
+                        <div className="text-[10px] text-[var(--jh-text-muted)] mt-0.5">
+                          更新 {new Date(position_summary.price_updated_at).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                  {position_summary.price_unavailable && position_summary.current_shares > 0 && (
+                    <div className="col-span-2 md:col-span-3 flex items-center gap-1.5 text-xs text-[var(--jh-text-muted)] px-1">
+                      <Info className="w-3.5 h-3.5 shrink-0" />
+                      实时行情暂不可用，浮动盈亏无法计算
+                    </div>
+                  )}
+                  <div className="p-4 rounded-md bg-[rgba(255,255,255,0.03)] border border-[var(--jh-border)]">
                     <div className="text-xs text-[var(--jh-text-muted)] mb-1">均买价</div>
                     <div className="text-lg font-bold text-[var(--jh-text)]">{formatMoney(position_summary.cost_basis)}</div>
                     {position_summary.total_cost != null && position_summary.current_shares > 0 && (
                       <div className="text-xs text-[var(--jh-text-muted)] mt-0.5">总成本 {formatMoney(position_summary.total_cost)}</div>
                     )}
                   </div>
-                  <div className="p-4 rounded-lg bg-[rgba(255,255,255,0.03)] border border-[var(--jh-border)]">
+                  {(position_summary.market_value ?? 0) > 0 && (
+                    <div className="p-4 rounded-md bg-[rgba(255,255,255,0.03)] border border-[var(--jh-border)]">
+                      <div className="text-xs text-[var(--jh-text-muted)] mb-1">当前市值</div>
+                      <div className="text-lg font-bold text-[var(--jh-text)]">{formatMoney(position_summary.market_value!)}</div>
+                    </div>
+                  )}
+                  <div className="p-4 rounded-md bg-[rgba(255,255,255,0.03)] border border-[var(--jh-border)]">
                     <div className="text-xs text-[var(--jh-text-muted)] mb-1">累计买入</div>
                     <div className="text-lg font-bold text-[var(--jh-accent)]">{formatMoney(position_summary.total_buy_amount)}</div>
                   </div>
-                  <div className="p-4 rounded-lg bg-[rgba(255,255,255,0.03)] border border-[var(--jh-border)]">
+                  <div className="p-4 rounded-md bg-[rgba(255,255,255,0.03)] border border-[var(--jh-border)]">
                     <div className="text-xs text-[var(--jh-text-muted)] mb-1">累计卖出</div>
                     <div className="text-lg font-bold text-[var(--jh-danger)]">{formatMoney(position_summary.total_sell_amount)}</div>
                   </div>
                 </div>
-                <div className="mt-4 p-4 rounded-lg bg-[rgba(99,230,208,0.05)] border border-[var(--jh-border-accent)]">
-                  <div className="flex items-center justify-between">
-                    <span className="text-sm text-[var(--jh-text-secondary)]">已实现盈亏（已扣佣金）</span>
-                    <span className={`text-lg font-bold ${position_summary.realized_profit >= 0 ? "text-[var(--jh-accent)]" : "text-[var(--jh-danger)]"}`}>
-                      {position_summary.realized_profit >= 0 ? "+" : ""}{formatMoney(position_summary.realized_profit)}
-                    </span>
+                <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                  <div className="p-4 rounded-md bg-[rgba(143,212,195,0.05)] border border-[var(--jh-border-accent)]">
+                    <div className="flex items-center justify-between">
+                      <span className="text-sm text-[var(--jh-text-secondary)]">已实现盈亏（已扣佣金）</span>
+                      <span className={`text-lg font-bold ${position_summary.realized_profit >= 0 ? "text-[var(--jh-accent)]" : "text-[var(--jh-danger)]"}`}>
+                        {position_summary.realized_profit >= 0 ? "+" : ""}{formatMoney(position_summary.realized_profit)}
+                      </span>
+                    </div>
                   </div>
+                  {position_summary.current_shares > 0 && (position_summary.unrealized_profit != null) && (
+                    <div className="p-4 rounded-md bg-[rgba(143,212,195,0.05)] border border-[var(--jh-border-accent)]">
+                      <div className="flex items-center justify-between">
+                        <span className="text-sm text-[var(--jh-text-secondary)]">浮动盈亏（实时）</span>
+                        <div className="text-right">
+                          <span className={`text-lg font-bold ${(position_summary.unrealized_profit ?? 0) >= 0 ? "text-[var(--jh-accent)]" : "text-[var(--jh-danger)]"}`}>
+                            {(position_summary.unrealized_profit ?? 0) >= 0 ? "+" : ""}{formatMoney(position_summary.unrealized_profit ?? 0)}
+                          </span>
+                          {(position_summary.holding_return_pct != null) && (
+                            <div className={`text-xs ${(position_summary.holding_return_pct ?? 0) >= 0 ? "text-[var(--jh-accent)]" : "text-[var(--jh-danger)]"}`}>
+                              持仓收益率 {(position_summary.holding_return_pct ?? 0) >= 0 ? "+" : ""}{(position_summary.holding_return_pct ?? 0).toFixed(2)}%
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  )}
                 </div>
                 {(position_summary.total_commission ?? 0) > 0 && (
                   <div className="mt-4 grid grid-cols-3 gap-3">
-                    <div className="p-3 rounded-lg bg-[rgba(255,255,255,0.03)] border border-[var(--jh-border)]">
+                    <div className="p-3 rounded-md bg-[rgba(255,255,255,0.03)] border border-[var(--jh-border)]">
                       <div className="text-xs text-[var(--jh-text-muted)] mb-1">累计手续费</div>
                       <div className="text-sm font-bold text-[var(--jh-text)]">{formatMoney(position_summary.total_commission!)}</div>
                     </div>
-                    <div className="p-3 rounded-lg bg-[rgba(255,255,255,0.03)] border border-[var(--jh-border)]">
+                    <div className="p-3 rounded-md bg-[rgba(255,255,255,0.03)] border border-[var(--jh-border)]">
                       <div className="text-xs text-[var(--jh-text-muted)] mb-1">买入佣金</div>
                       <div className="text-sm font-bold text-[var(--jh-text)]">{formatMoney(position_summary.buy_commission ?? 0)}</div>
                     </div>
-                    <div className="p-3 rounded-lg bg-[rgba(255,255,255,0.03)] border border-[var(--jh-border)]">
+                    <div className="p-3 rounded-md bg-[rgba(255,255,255,0.03)] border border-[var(--jh-border)]">
                       <div className="text-xs text-[var(--jh-text-muted)] mb-1">卖出佣金</div>
                       <div className="text-sm font-bold text-[var(--jh-text)]">{formatMoney(position_summary.sell_commission ?? 0)}</div>
                     </div>
@@ -452,7 +496,7 @@ export default function DossierDetailPage() {
               <div className="glass-card p-8 text-center">
                 <History className="w-8 h-8 text-[var(--jh-text-muted)] mx-auto mb-3" />
                 <div className="text-[var(--jh-text-muted)]">暂无策略版本</div>
-                <div className="text-sm text-[var(--jh-text-secondary)] mt-2">在头脑风暴室完成辩论后，策略会自动保存</div>
+                <div className="text-sm text-[var(--jh-text-secondary)] mt-2">在研究台完成多空纪要后，策略会自动保存</div>
               </div>
             ) : (
               strategies.map((s) => {
@@ -467,7 +511,7 @@ export default function DossierDetailPage() {
                       </div>
                       <div className="flex items-center gap-2">
                         <span className="text-xs text-[var(--jh-text-muted)]">{formatDate(s.created_at)}</span>
-                        <button type="button" onClick={() => { setEditingVersion(s.version_id); setEditContent(s.strategy_content); setStrategySaveError(""); }} className="p-1.5 rounded-lg hover:bg-[rgba(255,255,255,0.05)] text-[var(--jh-text-muted)] hover:text-[var(--jh-text)] transition-colors" aria-label="编辑策略">
+                        <button type="button" onClick={() => { setEditingVersion(s.version_id); setEditContent(s.strategy_content); setStrategySaveError(""); }} className="p-1.5 rounded-md hover:bg-[rgba(255,255,255,0.05)] text-[var(--jh-text-muted)] hover:text-[var(--jh-text)] transition-colors" aria-label="编辑策略">
                           <Edit3 className="w-4 h-4" />
                         </button>
                       </div>
@@ -477,7 +521,7 @@ export default function DossierDetailPage() {
                         {(() => {
                           const preview = parseStrategyContent(editContent);
                           return preview ? (
-                            <div className="p-4 rounded-lg border border-[var(--jh-border-accent)] bg-[rgba(99,230,208,0.04)]">
+                            <div className="p-4 rounded-md border border-[var(--jh-border-accent)] bg-[rgba(143,212,195,0.04)]">
                               <div className="text-xs text-[var(--jh-accent)] mb-3 font-medium">预览</div>
                               <StrategyCardView content={preview} />
                             </div>
@@ -493,7 +537,7 @@ export default function DossierDetailPage() {
                             value={editContent}
                             onChange={(e) => setEditContent(e.target.value)}
                             aria-label="编辑策略内容"
-                            className="w-full h-48 p-3 rounded-lg bg-[rgba(255,255,255,0.03)] border border-[var(--jh-border)] text-[var(--jh-text)] text-xs font-mono resize-none focus:border-[var(--jh-accent)] focus:outline-none"
+                            className="w-full h-48 p-3 rounded-md bg-[rgba(255,255,255,0.03)] border border-[var(--jh-border)] text-[var(--jh-text)] text-xs font-mono resize-none focus:border-[var(--jh-accent)] focus:outline-none"
                           />
                         </details>
                         {strategySaveError && (
@@ -511,6 +555,33 @@ export default function DossierDetailPage() {
                 );
               })
             )}
+          </div>
+        )}
+
+        {/* 研究笔记 Tab */}
+        {activeTab === "notes" && (
+          <div className="space-y-4 animate-fade-in-up" role="tabpanel">
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <h2 className="text-base font-semibold text-[var(--jh-text)]">研究笔记</h2>
+                <p className="mt-1 text-sm text-[var(--jh-text-secondary)]">
+                  与研究台右侧笔记同步，支持 Markdown 格式；修改后会自动保存到本股票卷宗。
+                </p>
+              </div>
+            </div>
+            <ResearchNoteEditor
+              stockCode={dossier.stock_code}
+              stockName={dossier.stock_name}
+              initialNote={dossier.research_note || ""}
+              variant="page"
+              onSaved={(note) =>
+                setData((prev) =>
+                  prev
+                    ? { ...prev, dossier: { ...prev.dossier, research_note: note } }
+                    : prev
+                )
+              }
+            />
           </div>
         )}
 
@@ -538,7 +609,7 @@ export default function DossierDetailPage() {
                   return (
                   <div key={txn.txn_id} className="glass-card p-4 flex items-center justify-between">
                     <div className="flex items-center gap-4">
-                      <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${txn.direction === "buy" ? "bg-[rgba(99,230,208,0.1)] text-[var(--jh-accent)]" : "bg-[rgba(255,122,122,0.1)] text-[var(--jh-danger)]"}`}>
+                      <div className={`w-10 h-10 rounded-md flex items-center justify-center ${txn.direction === "buy" ? "bg-[rgba(143,212,195,0.1)] text-[var(--jh-accent)]" : "bg-[rgba(223,95,95,0.1)] text-[var(--jh-danger)]"}`}>
                         {txn.direction === "buy" ? <TrendingUp className="w-5 h-5" /> : <TrendingDown className="w-5 h-5" />}
                       </div>
                       <div>
@@ -691,7 +762,7 @@ export default function DossierDetailPage() {
               将永久删除 <strong>{dossier.stock_name}</strong> 的策略版本、交易记录和收益数据。
             </p>
             <p className="text-xs text-[var(--jh-text-muted)] mb-6">
-              此操作不可恢复。删除后可重新进入头脑风暴室，为该股票创建新卷宗。
+              此操作不可恢复。删除后可重新进入研究台，为该股票创建新卷宗。
             </p>
             <div className="flex gap-2">
               <button

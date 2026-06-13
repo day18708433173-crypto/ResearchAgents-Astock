@@ -8,6 +8,7 @@ import logging
 from fastapi import APIRouter, HTTPException
 
 from services.db_init import get_db
+from services.strategy_alerts import save_strategy_alerts, parse_strategy_content_json
 from backend.schemas import (
     StrategyCreateRequest,
     StrategyCreateResponse,
@@ -43,6 +44,8 @@ async def update_strategy(version_id: int, req: StrategyUpdateRequest):
         conn.close()
         raise HTTPException(status_code=404, detail="策略版本不存在")
 
+    dossier_id = dict(existing)['dossier_id']
+
     # 更新内容
     conn.execute(
         "UPDATE strategy_version SET strategy_content = ? WHERE version_id = ?",
@@ -52,9 +55,15 @@ async def update_strategy(version_id: int, req: StrategyUpdateRequest):
     # 更新卷宗的 updated_at
     conn.execute(
         "UPDATE dossier SET updated_at = datetime('now') WHERE dossier_id = ?",
-        (dict(existing)['dossier_id'],)
+        (dossier_id,)
     )
 
     conn.commit()
     conn.close()
+
+    # 重新解析策略内容并更新 strategy_alert 阈值
+    strategy_text = parse_strategy_content_json(req.strategy_content)
+    if strategy_text:
+        save_strategy_alerts(dossier_id, version_id, strategy_text)
+
     return {"success": True, "message": "策略已更新"}

@@ -36,19 +36,25 @@ export interface JudgeVerdict {
 interface SSEEvent {
   type: string;
   message?: string;
-  data?: any;
+  data?: unknown;
   round?: number;
   content?: string;
   delta?: string;
 }
 
 export interface DataCardFieldInfo {
-  value: any;
+  value: unknown;
   grade: string;
   source: string;
   as_of?: string;
   period_label?: string;
   period_warning?: string;
+}
+
+interface DataCardPayload {
+  coverage?: number;
+  fields?: Record<string, DataCardFieldInfo>;
+  debate_id?: unknown;
 }
 
 interface UseDebateStreamOptions {
@@ -57,9 +63,10 @@ interface UseDebateStreamOptions {
   /** 辩论完成时调用（用于刷新历史记录等） */
   onComplete?: () => void;
   toast: (message: string, type?: 'success' | 'error' | 'info') => void;
+  focusQuestion?: string;
 }
 
-export function useDebateStream({ onDebateStart, onComplete, toast }: UseDebateStreamOptions) {
+export function useDebateStream({ onDebateStart, onComplete, toast, focusQuestion = '' }: UseDebateStreamOptions) {
   const debateAbortRef = useRef<AbortController | null>(null);
 
   const [isStreaming, setIsStreaming] = useState(false);
@@ -100,6 +107,9 @@ export function useDebateStream({ onDebateStart, onComplete, toast }: UseDebateS
       ticker: selectedStock.ts_code,
       ticker_name: selectedStock.name,
     });
+    if (focusQuestion.trim()) {
+      params.set('focus_question', focusQuestion.trim());
+    }
 
     const streamUrl = `/api/debate/stream?${params.toString()}`;
 
@@ -140,14 +150,17 @@ export function useDebateStream({ onDebateStart, onComplete, toast }: UseDebateS
                   break;
 
                 case 'data_card':
-                  setCoverage(data.data?.coverage || 0);
-                  if (data.data?.fields) {
-                    setDataCardFields(data.data.fields);
+                  {
+                    const payload = (data.data || {}) as DataCardPayload;
+                    setCoverage(payload.coverage || 0);
+                    if (payload.fields) {
+                      setDataCardFields(payload.fields);
+                    }
                   }
                   break;
 
                 case 'round_start':
-                  setStatusMessage(`第 ${data.round} 轮辩论开始`);
+                  setStatusMessage(`第 ${data.round} 轮研究纪要开始生成`);
                   setRounds(prev => {
                     const roundNum = data.round || 1;
                     if (prev.find(r => r.round === roundNum)) return prev;
@@ -212,14 +225,17 @@ export function useDebateStream({ onDebateStart, onComplete, toast }: UseDebateS
                   break;
 
                 case 'judge':
-                  setJudgeVerdict(data.data || null);
+                  setJudgeVerdict((data.data as JudgeVerdict | null) || null);
                   break;
 
                 case 'complete':
-                  if (data.data?.debate_id) {
-                    setCurrentDebateId(Number(data.data.debate_id));
+                  {
+                    const payload = (data.data || {}) as DataCardPayload;
+                    if (payload.debate_id) {
+                      setCurrentDebateId(Number(payload.debate_id));
+                    }
                   }
-                  setStatusMessage('辩论完成！进入 Step 3 与策略教练制定策略');
+                  setStatusMessage('研究纪要已完成，策略审查已自动开启');
                   setIsStreaming(false);
                   setStreamingSide(null);
                   setStreamingRound(null);
@@ -228,7 +244,7 @@ export function useDebateStream({ onDebateStart, onComplete, toast }: UseDebateS
 
                 case 'error':
                   setStatusMessage(`错误: ${data.message}`);
-                  toast(data.message || '辩论出错', 'error');
+                  toast(data.message || '研究生成出错', 'error');
                   setIsStreaming(false);
                   setStreamingSide(null);
                   setStreamingRound(null);
@@ -242,13 +258,13 @@ export function useDebateStream({ onDebateStart, onComplete, toast }: UseDebateS
       }
     } catch (err) {
       if (err instanceof Error && err.name === 'AbortError') {
-        setStatusMessage('已停止辩论');
+        setStatusMessage('已停止研究生成');
         return;
       }
       console.error('[ERROR] SSE连接失败:', err);
       const msg = err instanceof Error ? err.message : String(err);
       setStatusMessage(`连接中断: ${msg}`);
-      toast('辩论连接中断，请重试', 'error');
+      toast('研究连接中断，请重试', 'error');
     } finally {
       if (debateAbortRef.current === abortController) {
         setIsStreaming(false);

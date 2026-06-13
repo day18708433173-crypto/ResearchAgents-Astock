@@ -6,7 +6,6 @@ Handles fetching, chunking, embedding, and storing of all RAG knowledge sources:
 - Financial concept definitions (static curated content)
 - Financial report history (via services/knowledge_base.py)
 - Recent announcements (via akshare)
-- Debate history (via SQLite debate_logs)
 
 All data fetching is lazy and cached — re-indexing only happens when TTL expires.
 """
@@ -620,59 +619,6 @@ def index_announcements(ticker: str, days: int = 90) -> int:
             continue
 
     return indexed
-
-
-def index_debate_history(debate_result: dict) -> bool:
-    """Index a completed debate as a summary chunk for future retrieval.
-
-    Args:
-        debate_result: The result dict from orchestrator.run_debate()
-
-    Returns:
-        True if indexed successfully.
-    """
-    from services.rag.embeddings import encode_single
-    from services.rag.vector_store import upsert_chunk
-
-    ticker = debate_result.get("ticker", "")
-    rounds = debate_result.get("rounds", [])
-    accuracy = debate_result.get("accuracy_grade", "")
-
-    if not ticker or not rounds:
-        return False
-
-    # Build summary: key claims from each round
-    summary_parts = [f"股票：{ticker}", f"准确性评级：{accuracy}级"]
-    for rd in rounds:
-        r_num = rd.get("round", "?")
-        bull = rd.get("bull", "")[:200]
-        bear = rd.get("bear", "")[:200]
-        summary_parts.append(f"第{r_num}轮多头：{bull}")
-        summary_parts.append(f"第{r_num}轮空头：{bear}")
-
-    content = "\n\n".join(summary_parts)[:500]
-
-    if not _ensure_embedding_ready():
-        return False
-
-    try:
-        vec = encode_single(content)
-        chunk_id = f"debate_history:{ticker}:{datetime.now().strftime('%Y%m%d%H%M%S')}"
-        upsert_chunk(
-            chunk_id=chunk_id,
-            content=content,
-            vector=vec,
-            source_type="debate_history",
-            ticker=ticker,
-            metadata={
-                "accuracy_grade": accuracy,
-                "rounds_count": len(rounds),
-            },
-            ttl_hours=720,  # 30 days
-        )
-        return True
-    except Exception:
-        return False
 
 
 # ═══════════════════════════════════════════════

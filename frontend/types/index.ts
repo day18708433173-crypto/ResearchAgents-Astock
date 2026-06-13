@@ -34,6 +34,7 @@ export interface Dossier {
   current_strategy_version: number;  // 当前生效的策略版本号
   commission_min?: number | null;
   commission_rate?: number | null;
+  research_note?: string;
   created_at: string;
   updated_at: string;
 }
@@ -183,4 +184,144 @@ export interface ProfitCurve {
   total_investment: number;   // 总投入金额
   total_return: number;       // 总收益金额
   total_return_pct: number;   // 总收益率
+}
+
+// ═══════════════════════════════════════════════
+// 投研工作台
+// ═══════════════════════════════════════════════
+
+export interface IndexPulse {
+  name: string;
+  code: string;
+  change_pct?: number | null;
+  price?: number | null;
+}
+
+export interface MarketPulse {
+  sh_index: IndexPulse;
+  sz_index: IndexPulse;
+  north_flow_yi?: number | null;
+  limit_up_count?: number | null;
+  updated_at: string;
+  available: boolean;
+  note?: string;
+}
+
+export interface StaleAlertItem {
+  dossier_id: number;
+  stock_code: string;
+  stock_name: string;
+  current_hold_shares: number;
+  days_since_debate?: number | null;
+  last_debate_at?: string | null;
+  level: "critical" | "warning" | "ok";
+  message: string;
+}
+
+export interface StaleAlerts {
+  alerts: StaleAlertItem[];
+  critical_count: number;
+  warning_count: number;
+}
+
+export interface DecisionQualityBucket {
+  total: number;
+  correct: number;
+  accuracy_pct?: number | null;
+}
+
+export interface DecisionQualityItem {
+  ticker: string;
+  ticker_name: string;
+  verdict_rating: string;
+  trade_direction: string;
+  trade_time: string;
+  pnl_pct?: number | null;
+  aligned: boolean;
+  correct: boolean;
+}
+
+export interface DecisionQuality {
+  all_time: DecisionQualityBucket;
+  month: DecisionQualityBucket;
+  recent_items: DecisionQualityItem[];
+}
+
+export interface BlindSpotInsight {
+  kind: string;
+  message: string;
+  severity: "info" | "warning" | "critical";
+}
+
+export interface BlindSpotRadar {
+  insights: BlindSpotInsight[];
+  bullish_count: number;
+  bearish_count: number;
+  neutral_count: number;
+  overdue_tickers: string[];
+}
+
+export interface WorkspaceQueueItem {
+  dossier_id: number;
+  stock_code: string;
+  stock_name: string;
+  current_strategy_version: number;
+  current_hold_shares: number;
+  updated_at: string;
+  verdict_rating: string;
+  drift_status: "none" | "near_stop" | "triggered" | "no_stop_defined";
+  drift_message: string;
+}
+
+export interface WorkspaceOverview {
+  queue: WorkspaceQueueItem[];
+  stale_alerts: StaleAlerts;
+  blind_spot: BlindSpotRadar;
+  portfolio?: PortfolioSummary | null;
+  strategy_alerts?: StrategyAlertsSummary | null;
+}
+
+export interface PortfolioItem {
+  dossier_id: number;
+  stock_code: string;
+  stock_name: string;
+  current_shares: number;
+  current_price: number;
+  market_value: number;
+  realized_profit: number;
+  unrealized_profit: number;
+  buy_deployment: number;
+  weight_pct: number;
+}
+
+export interface PortfolioSummary {
+  total_buy_deployment: number;
+  total_realized_profit: number;
+  total_market_value: number;
+  total_unrealized_profit: number;
+  total_assets: number;
+  items: PortfolioItem[];
+  updated_at: string;
+}
+
+export interface StrategyAlertItem {
+  alert_id: number;
+  dossier_id: number;
+  version_id: number;
+  stock_code?: string;
+  stock_name?: string;
+  section: "entry" | "exit";
+  metric: string;
+  condition_type: string;
+  threshold: number;
+  source_text?: string;
+  status: "watching" | "near" | "triggered";
+  message?: string;
+  current_value?: number | null;
+}
+
+export interface StrategyAlertsSummary {
+  alerts: StrategyAlertItem[];
+  near_count: number;
+  triggered_count: number;
 }

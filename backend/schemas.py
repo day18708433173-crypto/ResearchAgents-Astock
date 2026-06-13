@@ -31,8 +31,15 @@ class DossierResponse(BaseModel):
     current_strategy_version: int
     commission_min: Optional[float] = None
     commission_rate: Optional[float] = None
+    research_note: str = ""
     created_at: str
     updated_at: str
+
+
+class ResearchNoteUpdateRequest(BaseModel):
+    stock_code: str
+    ticker_name: str = ""
+    research_note: str = ""
 
 
 class StrategyVersionResponse(BaseModel):
@@ -105,6 +112,7 @@ class StrategyCreateResponse(BaseModel):
 class DebateRequest(BaseModel):
     ticker: str = Field(..., description="股票代码，如 600519.SH")
     ticker_name: str = Field(default="", description="股票名称")
+    focus_question: str = Field(default="", description="可选聚焦问题，引导辩论方向")
 
 
 class DebateRoundResponse(BaseModel):
@@ -186,6 +194,7 @@ class CoachMessage(BaseModel):
 class CoachChatRequest(BaseModel):
     ticker: str
     ticker_name: str = ""
+    debate_id: Optional[int] = None
     debate_result: dict = None  # 辩论结果摘要
     debate_summary: str = ""  # 兼容前端初始化时传入的摘要
     messages: List[CoachMessage] = []  # 对话历史
@@ -251,3 +260,128 @@ class KnowledgeResponse(BaseModel):
     explanation: str
     examples: List[str] = []
     related_terms: List[str] = []
+
+
+# ── 工作台 / 市场脉冲 ──
+
+class IndexPulse(BaseModel):
+    name: str
+    code: str
+    change_pct: Optional[float] = None
+    price: Optional[float] = None
+
+
+class MarketPulseResponse(BaseModel):
+    sh_index: IndexPulse
+    sz_index: IndexPulse
+    north_flow_yi: Optional[float] = None
+    limit_up_count: Optional[int] = None
+    updated_at: str
+    available: bool = True
+    note: str = ""
+
+
+class StaleAlertItem(BaseModel):
+    dossier_id: int
+    stock_code: str
+    stock_name: str
+    current_hold_shares: int
+    days_since_debate: Optional[int] = None
+    last_debate_at: Optional[str] = None
+    level: str  # critical | warning | ok
+    message: str
+
+
+class StaleAlertsResponse(BaseModel):
+    alerts: List[StaleAlertItem]
+    critical_count: int = 0
+    warning_count: int = 0
+
+
+class DecisionQualityBucket(BaseModel):
+    total: int = 0
+    correct: int = 0
+    accuracy_pct: Optional[float] = None
+
+
+class DecisionQualityItem(BaseModel):
+    ticker: str
+    ticker_name: str = ""
+    verdict_rating: str = ""
+    trade_direction: str = ""
+    trade_time: str = ""
+    pnl_pct: Optional[float] = None
+    aligned: bool = False
+    correct: bool = False
+
+
+class DecisionQualityResponse(BaseModel):
+    all_time: DecisionQualityBucket
+    month: DecisionQualityBucket
+    recent_items: List[DecisionQualityItem] = Field(default_factory=list)
+
+
+class BlindSpotInsight(BaseModel):
+    kind: str
+    message: str
+    severity: str = "info"  # info | warning | critical
+
+
+class BlindSpotRadarResponse(BaseModel):
+    insights: List[BlindSpotInsight]
+    bullish_count: int = 0
+    bearish_count: int = 0
+    neutral_count: int = 0
+    overdue_tickers: List[str] = Field(default_factory=list)
+
+
+class WorkspaceQueueItem(BaseModel):
+    dossier_id: int
+    stock_code: str
+    stock_name: str
+    current_strategy_version: int
+    current_hold_shares: int
+    updated_at: str
+    verdict_rating: str = ""
+    drift_status: str = "none"  # none | near_stop | triggered | no_stop_defined
+    drift_message: str = ""
+
+
+class WorkspaceOverviewResponse(BaseModel):
+    queue: List[WorkspaceQueueItem]
+    stale_alerts: StaleAlertsResponse
+    blind_spot: BlindSpotRadarResponse
+    portfolio: Optional[dict] = None
+    strategy_alerts: Optional[dict] = None
+
+
+class StrategyAlertItem(BaseModel):
+    alert_id: int
+    dossier_id: int
+    version_id: int
+    stock_code: str = ""
+    stock_name: str = ""
+    section: str
+    metric: str
+    condition_type: str
+    threshold: float
+    source_text: str = ""
+    status: str = "watching"
+    message: str = ""
+    current_value: Optional[float] = None
+
+
+class StrategyAlertsResponse(BaseModel):
+    alerts: List[StrategyAlertItem] = Field(default_factory=list)
+    near_count: int = 0
+    triggered_count: int = 0
+
+
+class PortfolioSummaryResponse(BaseModel):
+    total_buy_deployment: float = 0
+    total_realized_profit: float = 0
+    total_market_value: float = 0
+    total_unrealized_profit: float = 0
+    total_assets: float = 0
+    items: List[dict] = Field(default_factory=list)
+    updated_at: str = ""

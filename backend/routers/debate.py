@@ -51,6 +51,7 @@ async def debate_run(req: DebateRequest):
         result = _run_debate(
             ticker=req.ticker,
             ticker_name=req.ticker_name,
+            focus_question=req.focus_question or "",
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -210,6 +211,7 @@ async def debate_history_detail(debate_id: int):
 async def debate_stream(
     ticker: str = Query(..., description="股票代码"),
     ticker_name: str = Query(default="", description="股票名称"),
+    focus_question: str = Query(default="", description="可选聚焦问题"),
 ):
     """SSE 流式辩论：实时推送每轮发言
     
@@ -229,7 +231,7 @@ async def debate_stream(
 
         def producer():
             try:
-                for event in _stream_debate(ticker, ticker_name):
+                for event in _stream_debate(ticker, ticker_name, focus_question=focus_question):
                     loop.call_soon_threadsafe(queue.put_nowait, event)
             except Exception as e:
                 loop.call_soon_threadsafe(

@@ -4,14 +4,13 @@ import { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
-import { 
-  Search, Sparkles, Scale, 
+import {
+  Activity, Database, Search, Scale,
   Loader2,
-  MessageSquare, X, BookOpen, Clock
+  MessageSquare, X, BookOpen, Clock, StickyNote
 } from 'lucide-react';
 import {
   askKnowledge,
@@ -19,6 +18,7 @@ import {
   type CoachStreamEvent,
   type KnowledgeMessage as ApiKnowledgeMessage,
 } from '@/lib/api';
+import ResearchNoteEditor from '@/components/ResearchNoteEditor';
 import { useToast } from '@/components/toast-provider';
 import { useDebateStream, type Stock, type JudgeVerdict } from './useDebateStream';
 import DebatePanel from './DebatePanel';
@@ -91,6 +91,31 @@ const mergeDebateHistory = (...groups: DebateHistoryItem[][]): DebateHistoryItem
   return Array.from(byId.values()).sort((a, b) => (b.created_at || '').localeCompare(a.created_at || ''));
 };
 
+function ratingBadgeClass(rating: string) {
+  switch (rating) {
+    case '买入':
+    case '增持':
+      return 'jh-badge-accent';
+    case '减持':
+      return 'jh-badge-warning';
+    case '卖出':
+      return 'jh-badge-negative';
+    default:
+      return 'jh-badge-muted';
+  }
+}
+
+function formatHistoryDate(value?: string) {
+  if (!value) return '';
+  return new Date(value).toLocaleDateString('zh-CN', { month: 'short', day: 'numeric' });
+}
+
+const RESEARCH_STEPS = [
+  { step: '01', title: '搜索标的', desc: '输入代码或名称，锁定研究对象' },
+  { step: '02', title: '生成纪要', desc: 'AI 多空辩论，输出裁决摘要' },
+  { step: '03', title: '策略审查', desc: '将观点转化为可执行策略记录' },
+] as const;
+
 const fetchDebateHistory = async (limit = 6): Promise<DebateHistoryItem[]> => {
   const res = await fetch(`/api/debate/history?limit=${limit}`, { cache: 'no-store' });
   if (!res.ok) return [];
@@ -145,6 +170,11 @@ export default function BrainstormPage() {
   const { toast } = useToast();
   const knowledgeInputRef = useRef<HTMLInputElement>(null);
   const knowledgeAnchorRef = useRef('');
+  const resizeRef = useRef<{
+    pane: 'left' | 'right' | null;
+    startX: number;
+    startWidth: number;
+  }>({ pane: null, startX: 0, startWidth: 0 });
   
   // 状态
   const [searchQuery, setSearchQuery] = useState('');
@@ -156,6 +186,11 @@ export default function BrainstormPage() {
   const [isSearching, setIsSearching] = useState(false);
   const [searchError, setSearchError] = useState('');
   const [searchAttempted, setSearchAttempted] = useState(false);
+  const [leftPaneWidth, setLeftPaneWidth] = useState(300);
+  const [rightPaneWidth, setRightPaneWidth] = useState(320);
+  const [showLeftPane, setShowLeftPane] = useState(true);
+  const [showRightPane, setShowRightPane] = useState(false);
+  const [activeResize, setActiveResize] = useState<'left' | 'right' | null>(null);
   // 策略教练
   const [showCoachPanel, setShowCoachPanel] = useState(false); // 辩论完成后才展开
   const [coachMessages, setCoachMessages] = useState<CoachMessage[]>([]);
@@ -165,7 +200,7 @@ export default function BrainstormPage() {
   const [coachSuggestedQuestions, setCoachSuggestedQuestions] = useState<string[]>([]);
   const [canSaveCoachStrategy, setCanSaveCoachStrategy] = useState(false);
   const [savedCoachDossierId, setSavedCoachDossierId] = useState<number | null>(null);
-  const [showStrategyCardPreview, setShowStrategyCardPreview] = useState(false);
+  const [focusQuestion, setFocusQuestion] = useState('');
 
   // 金融科普Agent
   const [showKnowledgePanel, setShowKnowledgePanel] = useState(false);
@@ -178,6 +213,37 @@ export default function BrainstormPage() {
   
   // 辩论结果（用于策略教练）
   const [debateResult, setDebateResult] = useState<JudgeVerdict | null>(null);
+
+  useEffect(() => {
+    if (!activeResize) return;
+
+    const onMouseMove = (event: MouseEvent) => {
+      const current = resizeRef.current;
+      if (!current.pane) return;
+      const delta = event.clientX - current.startX;
+      if (current.pane === 'left') {
+        setLeftPaneWidth(Math.max(280, Math.min(520, current.startWidth + delta)));
+      } else {
+        setRightPaneWidth(Math.max(300, Math.min(560, current.startWidth - delta)));
+      }
+    };
+
+    const onMouseUp = () => {
+      resizeRef.current = { pane: null, startX: 0, startWidth: 0 };
+      setActiveResize(null);
+    };
+
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+    window.addEventListener('mousemove', onMouseMove);
+    window.addEventListener('mouseup', onMouseUp);
+    return () => {
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+      window.removeEventListener('mousemove', onMouseMove);
+      window.removeEventListener('mouseup', onMouseUp);
+    };
+  }, [activeResize]);
 
   const refreshDebateHistory = async () => {
     const localHistory = readLocalDebateHistory();
@@ -222,6 +288,7 @@ export default function BrainstormPage() {
       refreshDebateHistory();
     },
     toast,
+    focusQuestion,
   });
 
   useEffect(() => {
@@ -313,6 +380,7 @@ export default function BrainstormPage() {
   // 选择股票
   const handleSelectStock = (stock: Stock) => {
     setSelectedStock(stock);
+    setShowRightPane(true);
     setSearchQuery('');
     setSearchResults([]);
     setSearchError('');
@@ -328,10 +396,11 @@ export default function BrainstormPage() {
       industry: '',
     };
     setSelectedStock(stock);
+    setShowRightPane(true);
     setSearchQuery('');
     setSearchResults([]);
     setCoverage(item.coverage || 0);
-    setStatusMessage(item.summary ? `最近裁决：${item.rating || '已完成'} · ${item.summary}` : '已载入历史股票，可直接发起新辩论');
+    setStatusMessage(item.summary ? `最近裁决：${item.rating || '已完成'} · ${item.summary}` : '已载入历史股票，可直接生成新研究纪要');
     setCurrentDebateId(null);
     setRounds([]);
     setJudgeVerdict(null);
@@ -369,8 +438,8 @@ export default function BrainstormPage() {
       }
       setStatusMessage(
         restoredCoachMessages.length > 0
-          ? `已载入历史辩论：${detailRounds.length} 轮 + ${restoredCoachMessages.length} 条教练对话`
-          : `已载入历史辩论：${detailRounds.length} 轮，多空记录已恢复`,
+          ? `已载入历史研究：${detailRounds.length} 轮 + ${restoredCoachMessages.length} 条审查记录`
+          : `已载入历史研究：${detailRounds.length} 轮，多空纪要已恢复`,
       );
     } catch (err) {
       console.error('加载辩论历史详情失败:', err);
@@ -395,6 +464,7 @@ export default function BrainstormPage() {
   ) => ({
     ticker: selectedStock?.ts_code || '',
     ticker_name: selectedStock?.name || '',
+    debate_id: currentDebateId,
     debate_result: buildCoachDebateResult(),
     messages: messages.map((m) => ({ role: m.role, content: m.content })),
     state: coachState,
@@ -407,8 +477,8 @@ export default function BrainstormPage() {
     setCanSaveCoachStrategy(Boolean(event.can_save_strategy));
     if (event.strategy_saved && event.dossier_id) {
       setSavedCoachDossierId(event.dossier_id);
+      router.push(`/dossier/${event.dossier_id}`);
     }
-    if (event.state === 'reviewing') setShowStrategyCardPreview(true);
   };
 
   const consumeCoachStream = async (
@@ -461,8 +531,8 @@ export default function BrainstormPage() {
         }
       });
     } catch (err) {
-      console.error('策略教练流式对话失败:', err);
-      toast('策略教练回复失败，请重试', 'error');
+      console.error('策略审查流式对话失败:', err);
+      toast('策略审查回复失败，请重试', 'error');
       setCoachMessages((prev) => {
         const updated = [...prev];
         const last = updated[updated.length - 1];
@@ -535,7 +605,7 @@ export default function BrainstormPage() {
         console.error('初始化教练失败:', err);
         const fallbackMessage: CoachMessage = {
           role: 'coach',
-          content: '欢迎！我是策略教练，将帮你基于刚才的辩论，制定可执行的策略卡片。',
+          content: '研究纪要已就绪。接下来可以基于多空证据，形成可执行、可复盘的策略记录。',
           timestamp: new Date(),
         };
         setCoachMessages([fallbackMessage]);
@@ -629,8 +699,8 @@ export default function BrainstormPage() {
       };
       setKnowledgeMessages((prev) => [...prev, agentMessage]);
     } catch (err) {
-      console.error('金融科普提问失败:', err);
-      toast(err instanceof Error ? err.message : '金融科普请求失败', 'error');
+      console.error('术语解释提问失败:', err);
+      toast(err instanceof Error ? err.message : '术语解释请求失败', 'error');
     } finally {
       setIsKnowledgeLoading(false);
     }
@@ -674,8 +744,8 @@ export default function BrainstormPage() {
       };
       setKnowledgeMessages((prev) => [...prev, agentMessage]);
     } catch (err) {
-      console.error('金融科普对话失败:', err);
-      toast(err instanceof Error ? err.message : '金融科普请求失败', 'error');
+      console.error('术语解释对话失败:', err);
+      toast(err instanceof Error ? err.message : '术语解释请求失败', 'error');
     } finally {
       setIsKnowledgeLoading(false);
     }
@@ -690,309 +760,411 @@ export default function BrainstormPage() {
     stopDebate();
   };
   
-  // 创建卷宗
-  const handleCreateDossier = async () => {
-    if (!selectedStock) return;
-    
-    try {
-      const res = await fetch('/api/dossier/create', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ stock_code: selectedStock.ts_code }),
-      });
-      const data = await res.json();
-      router.push(`/dossier/${data.dossier_id}`);
-    } catch (err) {
-      console.error('创建卷宗失败:', err);
-      toast('创建卷宗失败', 'error');
-    }
+  const startResize = (pane: 'left' | 'right', event: React.MouseEvent<HTMLDivElement>) => {
+    resizeRef.current = {
+      pane,
+      startX: event.clientX,
+      startWidth: pane === 'left' ? leftPaneWidth : rightPaneWidth,
+    };
+    setActiveResize(pane);
+    event.preventDefault();
   };
-  
+
+  const isIdle = rounds.length === 0 && !isStreaming;
+  const showNotesPane = showRightPane && !!selectedStock && !showCoachPanel;
+
   return (
-    <div className="min-h-screen bg-[var(--jh-bg)]">
-      <div className="container mx-auto px-4 py-8">
-        <div className="flex gap-6 max-w-[1400px] mx-auto">
+    <div className="min-h-[calc(100vh-3.5rem)] bg-[var(--jh-bg)]">
+      <div className="px-4 sm:px-6 py-6">
+        <div className="flex gap-6">
           
           {/* 主内容区域 */}
           <div className="flex-1 min-w-0">
           
           {/* 标题 */}
-          <div className="mb-8 text-center">
-            <h1 className="text-3xl font-bold mb-2 text-[var(--jh-text)]">
-              <Sparkles className="inline-block mr-2 text-[var(--jh-warm)]" />
-              投资策略头脑风暴室
-            </h1>
-            <p className="text-[var(--jh-muted)]">
-              Step 1 选股 → Step 2 多空辩论 → Step 3 策略教练
-            </p>
-          </div>
-          
-          {/* 步骤1: 股票选择 */}
-          {debateHistory.length > 0 && (
-            <Card className="mb-6 bg-[var(--jh-surface)] border-[var(--jh-line)]">
-              <CardHeader>
-                <CardTitle className="text-lg flex items-center gap-2 text-[var(--jh-text)]">
-                  <Clock className="w-5 h-5 text-[var(--jh-accent)]" />
-                  最近辩论
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                  {debateHistory.map((item) => (
-                    <button
-                      key={item.id}
-                      type="button"
-                      onClick={() => handleOpenHistory(item)}
-                      className="text-left p-3 rounded-lg border border-[var(--jh-line)] hover:border-[var(--jh-accent)] hover:bg-[var(--jh-bg-2)] transition-all"
-                    >
-                      <div className="flex items-center justify-between gap-3">
-                        <div>
-                          <div className="font-medium text-[var(--jh-text)]">
-                            {item.ticker_name || item.ticker}
-                            <span className="ml-2 text-xs font-mono text-[var(--jh-muted)]">{item.ticker}</span>
-                          </div>
-                          <div className="mt-1 text-xs text-[var(--jh-muted)] line-clamp-1">
-                            {item.summary || `${item.rounds_count || 0} 轮辩论 · 数据覆盖率 ${item.coverage || 0}%`}
-                          </div>
-                        </div>
-                        {item.rating && (
-                          <Badge className="bg-[var(--jh-warm)] text-[var(--jh-bg)] whitespace-nowrap">{item.rating}</Badge>
-                        )}
-                      </div>
-                    </button>
-                  ))}
+          <div className="mb-5 flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
+            <div>
+              <div className="flex items-center gap-2 text-xs uppercase tracking-[0.18em] text-[var(--jh-text-muted)]">
+                <Activity className="w-3.5 h-3.5" />
+                Research Desk
+              </div>
+              <h1 className="mt-2 text-2xl font-semibold tracking-tight text-[var(--jh-text)]">
+                标的研究台
+              </h1>
+              <p className="mt-1 text-sm text-[var(--jh-text-secondary)]">
+                选择标的，生成多空研究纪要、裁决摘要和可追踪策略记录。
+              </p>
+            </div>
+            {selectedStock && (
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                <div className="terminal-panel px-4 py-3 min-w-[280px]">
+                  <div className="text-xs text-[var(--jh-text-muted)]">当前标的</div>
+                  <div className="mt-1 flex items-baseline justify-between gap-4">
+                    <div className="text-lg font-semibold text-[var(--jh-text)]">{selectedStock.name}</div>
+                    <div className="font-mono text-xs text-[var(--jh-text-muted)]">{selectedStock.ts_code}</div>
+                  </div>
                 </div>
-              </CardContent>
-            </Card>
-          )}
-
-          <Card className="mb-6 bg-[var(--jh-surface)] border-[var(--jh-line)]">
-            <CardHeader>
-              <CardTitle className="text-lg flex items-center gap-2 text-[var(--jh-text)]">
-                <Search className="w-5 h-5 text-[var(--jh-accent)]" />
-                Step 1: 选择目标股票
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="flex gap-4">
-                <div className="relative flex-1">
-                  <Input
-                    placeholder="输入股票代码或名称（如 600519 或 茅台）"
-                    value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
-                    onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
-                    className="pr-10"
-                  />
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="absolute right-0 top-0"
-                    onClick={handleSearch}
-                    disabled={isSearching}
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setShowLeftPane((value) => !value)}
+                    className="jh-btn-secondary px-3 py-2 text-xs"
                   >
-                    {isSearching ? <Loader2 className="w-4 h-4 animate-spin" /> : <Search className="w-4 h-4" />}
-                  </Button>
+                    {showLeftPane ? '隐藏控制栏' : '显示控制栏'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setShowRightPane((value) => !value)}
+                    className="jh-btn-secondary px-3 py-2 text-xs"
+                    disabled={!selectedStock}
+                  >
+                    {showRightPane ? '隐藏笔记' : '显示笔记'}
+                  </button>
                 </div>
               </div>
-              
-              {/* 搜索结果 */}
-              {searchAttempted && !isSearching && searchResults.length === 0 && !searchError && (
-                <div className="mt-4 p-4 text-center text-sm text-[var(--jh-muted)] border border-[var(--jh-line)] rounded-lg">
-                  未找到匹配股票，请尝试代码或完整名称
-                </div>
-              )}
-              {searchError && (
-                <div className="mt-4 p-4 text-center text-sm text-[var(--jh-danger)] border border-[var(--jh-danger)]/30 rounded-lg bg-[rgba(255,122,122,0.08)]">
-                  {searchError}
-                </div>
-              )}
-              
-              {searchResults.length > 0 && (
-                <div className="mt-4 border border-[var(--jh-line)] rounded-lg divide-y divide-[var(--jh-line)]">
-                  {searchResults.map((stock) => (
-                    <button
-                      key={stock.ts_code}
-                      type="button"
-                      className="w-full p-3 hover:bg-[var(--jh-bg-2)] cursor-pointer flex items-center justify-between text-[var(--jh-text)] text-left"
-                      onClick={() => handleSelectStock(stock)}
-                    >
-                      <div>
-                        <span className="font-medium">{stock.name}</span>
-                        <span className="ml-2 text-[var(--jh-muted)]">{stock.ts_code}</span>
-                        {stock.industry && (
-                          <Badge variant="outline" className="ml-2 border-[var(--jh-line)] text-[var(--jh-muted)]">{stock.industry}</Badge>
-                        )}
-                      </div>
-                    </button>
-                  ))}
-                </div>
-              )}
-              
-              {/* 已选择 */}
-              {selectedStock && (
-                <div className="mt-4 p-4 bg-[var(--jh-bg-2)] border border-[var(--jh-accent)] rounded-lg flex items-center justify-between">
-                  <div>
-                    <span className="font-bold text-lg text-[var(--jh-text)]">{selectedStock.name}</span>
-                    <span className="ml-2 text-[var(--jh-muted)]">{selectedStock.ts_code}</span>
-                  </div>
-                  <Button variant="ghost" size="sm" onClick={() => setSelectedStock(null)} className="text-[var(--jh-muted)]">
-                    更换
-                  </Button>
-                </div>
-              )}
-            </CardContent>
-          </Card>
+            )}
+          </div>
           
-          {/* 步骤2: 开始辩论 */}
-          {selectedStock && (
-            <Card className="mb-6 bg-[var(--jh-surface)] border-[var(--jh-line)]">
-              <CardHeader>
-                <CardTitle className="text-lg flex items-center gap-2 text-[var(--jh-text)]">
-                  <Scale className="w-5 h-5 text-[var(--jh-accent)]" />
-                  Step 2: 启动AI多空辩论
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="flex flex-wrap items-center gap-3">
-                  <Button
-                    onClick={handleStartDebate}
-                    disabled={isStreaming}
-                    className="bg-[var(--jh-accent)] text-[var(--jh-bg)] hover:bg-[var(--jh-accent-2)]"
-                  >
-                    {isStreaming ? (
+          <div className="flex flex-col gap-5 xl:flex-row xl:items-start xl:gap-0">
+            {showLeftPane && (
+            <aside className="xl:shrink-0">
+              <div className="xl:w-[var(--research-left-width)]" style={{ ['--research-left-width' as string]: `${leftPaneWidth}px` }}>
+                <section className="terminal-panel overflow-hidden xl:sticky xl:top-20">
+                  <div className="border-b border-[var(--jh-border)] px-4 py-3">
+                    <div className="flex items-center gap-2 text-sm font-semibold text-[var(--jh-text)]">
+                      <Search className="w-4 h-4 text-[var(--jh-text-muted)]" />
+                      选择研究标的
+                    </div>
+                  </div>
+                  <div className="p-4 space-y-4">
+                    <div className="relative">
+                      <Input
+                        placeholder="输入股票代码或名称"
+                        value={searchQuery}
+                        onChange={(e) => setSearchQuery(e.target.value)}
+                        onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
+                        className="pr-10"
+                      />
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="absolute right-0 top-0"
+                        onClick={handleSearch}
+                        disabled={isSearching}
+                      >
+                        {isSearching ? <Loader2 className="w-4 h-4 animate-spin" /> : <Search className="w-4 h-4" />}
+                      </Button>
+                    </div>
+
+                    {searchAttempted && !isSearching && searchResults.length === 0 && !searchError && (
+                      <div className="p-3 text-center text-xs text-[var(--jh-text-muted)] border border-dashed border-[var(--jh-border)] rounded-md">
+                        未找到匹配股票，请尝试代码或完整名称
+                      </div>
+                    )}
+                    {searchError && (
+                      <div className="p-3 text-center text-xs text-[var(--jh-danger)] border border-[var(--jh-danger)]/30 rounded-md bg-[rgba(223,95,95,0.08)]">
+                        {searchError}
+                      </div>
+                    )}
+
+                    {searchResults.length > 0 && (
+                      <div className="border border-[var(--jh-border)] rounded-md divide-y divide-[var(--jh-border)] overflow-hidden">
+                        {searchResults.map((stock) => (
+                          <button
+                            key={stock.ts_code}
+                            type="button"
+                            className="w-full p-3 hover:bg-[var(--jh-bg-2)] flex items-center justify-between text-[var(--jh-text)] text-left transition-colors"
+                            onClick={() => handleSelectStock(stock)}
+                          >
+                            <div className="min-w-0">
+                              <span className="font-medium">{stock.name}</span>
+                              <span className="ml-2 text-xs font-mono text-[var(--jh-text-muted)]">{stock.ts_code}</span>
+                              {stock.industry && (
+                                <Badge variant="outline" className="ml-2 border-[var(--jh-line)] text-[var(--jh-muted)]">{stock.industry}</Badge>
+                              )}
+                            </div>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+
+                    {selectedStock && (
                       <>
-                        <Loader2 className="w-4 h-4 animate-spin mr-2" />
-                        辩论进行中...
-                      </>
-                    ) : (
-                      <>
-                        <Sparkles className="w-4 h-4 mr-2" />
-                        开始头脑风暴
+                        <div className="rounded-md border border-[var(--jh-border-strong)] bg-[var(--jh-bg-2)] px-3 py-2.5 flex items-center justify-between gap-2">
+                          <div className="min-w-0">
+                            <div className="font-medium text-sm text-[var(--jh-text)] truncate">{selectedStock.name}</div>
+                            <div className="font-mono text-[10px] text-[var(--jh-text-muted)]">{selectedStock.ts_code}</div>
+                          </div>
+                          <Button variant="ghost" size="sm" onClick={() => { setSelectedStock(null); setShowRightPane(false); }} className="shrink-0 text-xs text-[var(--jh-text-muted)] h-7">
+                            更换
+                          </Button>
+                        </div>
+
+                        <div className="pt-1 border-t border-[var(--jh-border)]">
+                          <div className="mb-3 text-xs font-medium text-[var(--jh-text-secondary)]">生成多空研究纪要</div>
+                          <Input
+                            placeholder="聚焦问题（可选），如：当前估值是否偏贵？"
+                            value={focusQuestion}
+                            onChange={(e) => setFocusQuestion(e.target.value)}
+                            className="mb-2 text-xs"
+                            disabled={isStreaming}
+                          />
+                          <div className="flex flex-wrap items-center gap-2">
+                            <Button
+                              onClick={handleStartDebate}
+                              disabled={isStreaming}
+                              size="sm"
+                              className="bg-[var(--jh-accent)] text-[var(--jh-bg)] hover:bg-[var(--jh-accent-2)]"
+                            >
+                              {isStreaming ? (
+                                <>
+                                  <Loader2 className="w-3.5 h-3.5 animate-spin mr-1.5" />
+                                  生成中...
+                                </>
+                              ) : (
+                                <>
+                                  <Scale className="w-3.5 h-3.5 mr-1.5" />
+                                  生成研究纪要
+                                </>
+                              )}
+                            </Button>
+                            {isStreaming && (
+                              <Button variant="outline" size="sm" onClick={handleStopDebate}>
+                                停止
+                              </Button>
+                            )}
+                          </div>
+                          {statusMessage && (
+                            <div className="mt-3 p-2.5 rounded-md bg-[var(--jh-bg-2)] text-xs text-[var(--jh-text-muted)]">
+                              {statusMessage}
+                              {coverage > 0 && (
+                                <span className="ml-2 text-[var(--jh-accent)]">覆盖率 {coverage}%</span>
+                              )}
+                            </div>
+                          )}
+                        </div>
                       </>
                     )}
-                  </Button>
-                  
-                  {isStreaming && (
-                    <Button variant="outline" onClick={handleStopDebate}>
-                      停止
+                  </div>
+
+                  {Object.keys(dataCardFields).length > 0 && (
+                    <div className="border-t border-[var(--jh-border)]">
+                      <div className="flex items-center gap-2 px-4 py-3 text-xs font-medium text-[var(--jh-text-secondary)]">
+                        <Database className="w-3.5 h-3.5" />
+                        证据数据表
+                        <span className="jh-badge text-[10px] jh-badge-accent">覆盖率 {coverage}%</span>
+                      </div>
+                      <div className="px-4 pb-4">
+                        <div className="max-h-64 overflow-auto rounded-md border border-[var(--jh-border)]">
+                          <table className="data-table">
+                            <thead>
+                              <tr>
+                                <th>字段</th>
+                                <th>值</th>
+                                <th>质量</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {Object.entries(dataCardFields).map(([key, info]) => {
+                                const displayVal = info.value === null || info.value === undefined ? '—' : String(info.value);
+                                const gradeClass = info.grade === 'A'
+                                  ? 'jh-badge-accent'
+                                  : info.grade === 'B'
+                                    ? 'jh-badge-warning'
+                                    : info.grade === 'C'
+                                      ? 'bg-[rgba(223,95,95,0.12)] text-[var(--jh-danger)] border border-[rgba(223,95,95,0.28)]'
+                                      : 'jh-badge-info';
+                                return (
+                                  <tr key={key}>
+                                    <td className="font-medium text-[var(--jh-text)]">{key}</td>
+                                    <td className="font-mono text-xs text-[var(--jh-text)]">{displayVal}</td>
+                                    <td><span className={`jh-badge text-xs ${gradeClass}`}>{info.grade}</span></td>
+                                  </tr>
+                                );
+                              })}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </section>
+              </div>
+            </aside>
+            )}
+
+            {showLeftPane && !showCoachPanel && (
+              <div
+                className={`hidden xl:block w-px shrink-0 self-stretch bg-[var(--jh-border)] relative cursor-col-resize hover:bg-[var(--jh-accent)]/40 transition-colors ${activeResize === 'left' ? 'bg-[var(--jh-accent)]/60' : ''}`}
+                onMouseDown={(event) => startResize('left', event)}
+                role="separator"
+                aria-label="调整左侧栏宽度"
+              >
+                <span className="absolute inset-y-0 -left-1.5 -right-1.5" />
+              </div>
+            )}
+
+            <section className="min-w-0 flex-1 xl:px-3">
+              {judgeVerdict && !isStreaming && showCoachPanel && (
+                <div className="mb-5 rounded-md border border-[var(--jh-border-accent)] bg-[rgba(143,212,195,0.06)] px-4 py-3 flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-2 text-sm text-[var(--jh-text-secondary)]">
+                    <MessageSquare className="w-4 h-4 text-[var(--jh-accent)]" />
+                    <span>
+                      研究纪要已完成（评级 <strong className="text-[var(--jh-text)]">{judgeVerdict.rating}</strong>），策略审查已自动开启
+                    </span>
+                  </div>
+                  {savedCoachDossierId && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => router.push(`/dossier/${savedCoachDossierId}`)}
+                      className="border-[var(--jh-line)] text-xs shrink-0"
+                    >
+                      查看已保存策略
                     </Button>
                   )}
                 </div>
-                
-                {/* 状态消息 */}
-                {statusMessage && (
-                  <div className="mt-4 p-3 bg-[var(--jh-bg-2)] rounded-lg text-center text-[var(--jh-muted)]">
-                    {statusMessage}
-                    {coverage > 0 && (
-                      <Badge className="ml-2 bg-[var(--jh-surface)] text-[var(--jh-text)]">
-                        数据覆盖率: {coverage}%
-                      </Badge>
-                    )}
-                  </div>
-                )}
-              </CardContent>
-            </Card>
-          )}
-          
-          {/* 数据卡展示 */}
-          {Object.keys(dataCardFields).length > 0 && (
-            <Card className="mb-6 bg-[var(--jh-surface)] border-[var(--jh-line)]">
-              <CardHeader>
-                <CardTitle className="text-lg text-[var(--jh-text)] flex items-center gap-2">
-                  <Search className="w-5 h-5 text-[var(--jh-accent)]" />
-                  数据卡
-                  <Badge className="bg-[var(--jh-accent)] text-[var(--jh-bg)]">覆盖率 {coverage}%</Badge>
-                </CardTitle>
-                <p className="text-xs text-[var(--jh-muted)] mt-1">
-                  <span className="text-[var(--jh-accent)] font-medium">A级</span> = 交叉验证通过
-                  <span className="mx-2">·</span>
-                  <span className="text-[var(--jh-warm)] font-medium">B级</span> = 单源直采
-                  <span className="mx-2">·</span>
-                  <span className="text-red-400 font-medium">C级</span> = 多源偏差超限
-                </p>
-              </CardHeader>
-              <CardContent>
-                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2">
-                  {Object.entries(dataCardFields).map(([key, info]) => {
-                    const val = info.value;
-                    const displayVal = val === null || val === undefined ? '—' : String(val);
-                    const gradeColor = info.grade === 'A'
-                      ? 'text-[var(--jh-accent)]'
-                      : info.grade === 'B'
-                        ? 'text-[var(--jh-warm)]'
-                        : info.grade === 'C'
-                          ? 'text-red-400'
-                          : 'text-[var(--jh-muted)]';
-                    const timeNote = info.period_label && info.as_of
-                      ? `${info.period_label} · ${info.as_of}`
-                      : info.as_of || '';
-                    const cardBorder = info.grade === 'C' ? 'border-red-400/40' : 'border-[var(--jh-line)]';
-                    return (
-                      <div key={key} className={`p-2 bg-[var(--jh-bg-2)] rounded-lg border ${cardBorder}`}>
-                        <div className="flex items-center justify-between mb-1">
-                          <span className="text-xs text-[var(--jh-muted)] truncate" title={key}>{key}</span>
-                          <span className={`text-[10px] font-medium ${gradeColor}`}>{info.grade}</span>
+              )}
+
+              <DebatePanel
+                rounds={rounds}
+                judgeVerdict={judgeVerdict}
+                isStreaming={isStreaming}
+                streamingSide={streamingSide}
+                streamingRound={streamingRound}
+                onOpenCoach={() => setShowCoachPanel(true)}
+                coachActive={showCoachPanel}
+              />
+
+              {isIdle && (
+                <>
+                  {selectedStock ? (
+                    <section className="terminal-panel p-8 sm:p-12">
+                      <div className="max-w-md mx-auto text-center">
+                        <div className="inline-flex items-center gap-2 rounded-md border border-[var(--jh-border)] bg-[var(--jh-bg-2)] px-3 py-2 mb-6">
+                          <span className="font-semibold text-[var(--jh-text)]">{selectedStock.name}</span>
+                          <span className="font-mono text-xs text-[var(--jh-text-muted)]">{selectedStock.ts_code}</span>
                         </div>
-                        <div className="text-sm font-semibold text-[var(--jh-text)] truncate" title={displayVal}>{displayVal}</div>
-                        {timeNote && (
-                          <div className="text-[10px] text-[var(--jh-muted)] truncate mt-0.5" title={timeNote}>{timeNote}</div>
-                        )}
-                        {info.period_warning && (
-                          <div className="text-[10px] text-amber-400 truncate mt-0.5" title={info.period_warning}>⚠ {info.period_warning}</div>
-                        )}
+                        <Scale className="mx-auto mb-4 w-10 h-10 text-[var(--jh-accent)]/70" />
+                        <h2 className="text-lg font-semibold text-[var(--jh-text)]">准备生成研究纪要</h2>
+                        <p className="mt-2 text-sm text-[var(--jh-text-muted)] leading-relaxed">
+                          AI 将基于数据卡展开多空辩论，完成后自动进入策略审查。
+                        </p>
+                        <Input
+                          placeholder="聚焦问题（可选），如：分红率是否可持续？"
+                          value={focusQuestion}
+                          onChange={(e) => setFocusQuestion(e.target.value)}
+                          className="mt-4 max-w-sm mx-auto text-sm"
+                          disabled={isStreaming}
+                        />
+                        <Button
+                          onClick={handleStartDebate}
+                          disabled={isStreaming}
+                          className="mt-6 bg-[var(--jh-accent)] text-[var(--jh-bg)] hover:bg-[var(--jh-accent-2)]"
+                        >
+                          <Scale className="w-4 h-4 mr-2" />
+                          生成研究纪要
+                        </Button>
                       </div>
-                    );
-                  })}
-                </div>
-              </CardContent>
-            </Card>
-          )}
-          
-          {/* Step 3: 策略教练引导 */}
-          {judgeVerdict && !isStreaming && (
-            <Card className="mb-6 bg-[var(--jh-surface)] border-[var(--jh-accent)] border-l-4">
-              <CardHeader>
-                <CardTitle className="text-lg flex items-center gap-2 text-[var(--jh-text)]">
-                  <MessageSquare className="w-5 h-5 text-[var(--jh-accent)]" />
-                  Step 3: 策略教练
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                <p className="text-sm text-[var(--jh-muted)] mb-4">
-                  辩论已完成（评级 {judgeVerdict.rating}）。策略教练将帮你把多空观点转化为可执行的策略卡片。
-                </p>
-                <div className="flex flex-wrap gap-3">
-                  <Button
-                    onClick={() => setShowCoachPanel(true)}
-                    className="bg-[var(--jh-accent)] text-[var(--jh-bg)] hover:bg-[var(--jh-accent-2)]"
-                  >
-                    <MessageSquare className="w-4 h-4 mr-2" />
-                    打开策略教练
-                  </Button>
-                  <Button
-                    variant="outline"
-                    onClick={handleCreateDossier}
-                    className="border-[var(--jh-line)]"
-                  >
-                    先创建卷宗档案
-                  </Button>
-                </div>
-                <p className="text-xs text-[var(--jh-text-muted)] mt-3">
-                  「保存当前策略」由教练写入卷宗；「创建卷宗档案」仅建立股票档案，不含策略内容。
-                </p>
-              </CardContent>
-            </Card>
-          )}
-          
-          {/* 辩论结果展示 - 三栏并排布局 */}
-          <DebatePanel
-            rounds={rounds}
-            judgeVerdict={judgeVerdict}
-            isStreaming={isStreaming}
-            streamingSide={streamingSide}
-            streamingRound={streamingRound}
-            onOpenCoach={() => setShowCoachPanel(true)}
-          />
+                    </section>
+                  ) : debateHistory.length > 0 ? (
+                    <section className="terminal-panel overflow-hidden">
+                      <div className="border-b border-[var(--jh-border)] px-5 py-4">
+                        <div className="flex items-center gap-2">
+                          <Clock className="w-4 h-4 text-[var(--jh-text-muted)]" />
+                          <h2 className="text-sm font-semibold text-[var(--jh-text)]">继续上次研究</h2>
+                        </div>
+                        <p className="mt-1 text-xs text-[var(--jh-text-muted)]">点击记录快速载入标的，或在左侧搜索新股票</p>
+                      </div>
+                      <div className="grid gap-3 p-5 sm:grid-cols-2">
+                        {debateHistory.map((item) => (
+                          <button
+                            key={item.id}
+                            type="button"
+                            onClick={() => handleOpenHistory(item)}
+                            className="group text-left rounded-md border border-[var(--jh-border)] p-4 hover:border-[var(--jh-border-strong)] hover:bg-[var(--jh-bg-2)] transition-colors"
+                          >
+                            <div className="flex items-start justify-between gap-3">
+                              <div className="min-w-0">
+                                <div className="font-medium text-[var(--jh-text)] truncate">{item.ticker_name || item.ticker}</div>
+                                <div className="mt-0.5 font-mono text-[10px] text-[var(--jh-text-muted)]">{item.ticker}</div>
+                              </div>
+                              {item.rating ? (
+                                <span className={`jh-badge text-[10px] shrink-0 ${ratingBadgeClass(item.rating)}`}>{item.rating}</span>
+                              ) : null}
+                            </div>
+                            <p className="mt-2 text-xs text-[var(--jh-text-secondary)] line-clamp-2 leading-relaxed">
+                              {item.summary || `${item.rounds_count || 0} 轮纪要 · 数据覆盖率 ${item.coverage || 0}%`}
+                            </p>
+                            {item.created_at ? (
+                              <div className="mt-2 text-[10px] text-[var(--jh-text-muted)]">{formatHistoryDate(item.created_at)}</div>
+                            ) : null}
+                          </button>
+                        ))}
+                      </div>
+                    </section>
+                  ) : (
+                    <section className="terminal-panel p-8 sm:p-10">
+                      <div className="max-w-2xl mx-auto">
+                        <div className="text-center mb-8">
+                          <Scale className="mx-auto mb-4 w-10 h-10 text-[var(--jh-accent)]/70" />
+                          <h2 className="text-lg font-semibold text-[var(--jh-text)]">开始一场标的研究</h2>
+                          <p className="mt-2 text-sm text-[var(--jh-text-muted)]">
+                            从左侧搜索股票，生成多空研究纪要，再进入策略审查形成可追踪记录。
+                          </p>
+                        </div>
+                        <div className="grid gap-3 sm:grid-cols-3">
+                          {RESEARCH_STEPS.map((item) => (
+                            <div key={item.step} className="rounded-md border border-[var(--jh-border)] bg-[var(--jh-bg-2)]/50 p-4">
+                              <div className="text-[10px] font-mono tracking-widest text-[var(--jh-accent)]">{item.step}</div>
+                              <div className="mt-2 text-sm font-medium text-[var(--jh-text)]">{item.title}</div>
+                              <p className="mt-1 text-xs text-[var(--jh-text-muted)] leading-relaxed">{item.desc}</p>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    </section>
+                  )}
+                </>
+              )}
+            </section>
+
+            {showNotesPane && (
+              <div
+                className={`hidden xl:block w-px shrink-0 self-stretch bg-[var(--jh-border)] relative cursor-col-resize hover:bg-[var(--jh-accent)]/40 transition-colors ${activeResize === 'right' ? 'bg-[var(--jh-accent)]/60' : ''}`}
+                onMouseDown={(event) => startResize('right', event)}
+                role="separator"
+                aria-label="调整右侧笔记栏宽度"
+              >
+                <span className="absolute inset-y-0 -left-1.5 -right-1.5" />
+              </div>
+            )}
+
+            {showNotesPane && (
+            <aside className="mt-5 xl:mt-0 xl:shrink-0" style={{ width: undefined }}>
+              <div className="xl:w-[var(--research-right-width)] xl:sticky xl:top-20" style={{ ['--research-right-width' as string]: `${rightPaneWidth}px` }}>
+                <section className="terminal-panel overflow-hidden">
+                  <div className="flex items-center justify-between border-b border-[var(--jh-line)] px-4 py-3">
+                    <div className="flex items-center gap-2">
+                      <StickyNote className="w-4 h-4 text-[var(--jh-text-muted)]" />
+                      <h2 className="text-sm font-semibold text-[var(--jh-text)]">研究笔记</h2>
+                    </div>
+                    <span className="text-[10px] font-mono text-[var(--jh-text-muted)]">
+                      {selectedStock.ts_code}
+                    </span>
+                  </div>
+                  <div className="p-0">
+                    <ResearchNoteEditor
+                      stockCode={selectedStock!.ts_code}
+                      stockName={selectedStock!.name}
+                      variant="sidebar"
+                    />
+                  </div>
+                </section>
+              </div>
+            </aside>
+            )}
+          </div>
           
           {/* 金融科普悬浮按钮 */}
           {showKnowledgeButton && selectedKnowledgeText && (
@@ -1005,7 +1177,7 @@ export default function BrainstormPage() {
               className="fixed z-50 bg-[var(--jh-accent)] text-[var(--jh-bg)] px-3 py-1.5 rounded-lg shadow-lg text-sm font-medium hover:bg-[var(--jh-accent-2)] transition-colors max-w-[calc(100vw-2rem)]"
               style={{ left: `clamp(1rem, ${knowledgeButtonPos.x + 10}px, calc(100vw - 8rem))`, top: `max(0.5rem, ${knowledgeButtonPos.y - 40}px)` }}
             >
-              金融科普
+              术语解释
             </button>
           )}
           
@@ -1026,6 +1198,8 @@ export default function BrainstormPage() {
             canSaveCoachStrategy={canSaveCoachStrategy}
             savedCoachDossierId={savedCoachDossierId}
             debateResult={debateResult}
+            stockCode={selectedStock?.ts_code}
+            stockName={selectedStock?.name}
             onClose={() => setShowCoachPanel(false)}
             onSendMessage={handleSendCoachMessage}
             onQuickReply={handleQuickReply}
@@ -1040,7 +1214,7 @@ export default function BrainstormPage() {
           onClick={() => setShowKnowledgePanel(false)}
           role="dialog"
           aria-modal="true"
-          aria-label="金融科普"
+          aria-label="术语解释"
         >
           <div
             className="w-full max-w-[480px] max-h-[min(600px,85vh)] bg-[var(--jh-surface)] border border-[var(--jh-line)] rounded-xl shadow-2xl flex flex-col overflow-hidden"
@@ -1050,13 +1224,13 @@ export default function BrainstormPage() {
             <div className="flex items-center justify-between p-4 border-b border-[var(--jh-line)]">
               <div className="flex items-center gap-2">
                 <BookOpen className="w-5 h-5 text-[var(--jh-accent)]" />
-                <h3 className="font-semibold text-[var(--jh-text)]">金融科普</h3>
+                  <h3 className="font-semibold text-[var(--jh-text)]">术语解释</h3>
               </div>
               <button
                 type="button"
                 onClick={() => setShowKnowledgePanel(false)}
                 className="text-[var(--jh-muted)] hover:text-[var(--jh-text)] transition-colors"
-                aria-label="关闭金融科普"
+                aria-label="关闭术语解释"
               >
                 <X className="w-5 h-5" />
               </button>
@@ -1084,7 +1258,7 @@ export default function BrainstormPage() {
                     : 'bg-[var(--jh-bg-2)] border border-[var(--jh-line)]'
                 }`}>
                   <div className="text-xs text-[var(--jh-muted)] mb-1">
-                    {msg.role === 'user' ? '提问' : '金融科普Agent'}
+                    {msg.role === 'user' ? '提问' : '知识库'}
                   </div>
                   <div className="text-sm text-[var(--jh-text)] knowledge-content">
                     <ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.content}</ReactMarkdown>
@@ -1111,7 +1285,7 @@ export default function BrainstormPage() {
               )}
               {knowledgeMessages.length === 0 && !isKnowledgeLoading && (
                 <div className="text-center text-[var(--jh-muted)] text-sm py-8">
-                  点击下方按钮，向AI提问选中文本的含义
+                  点击下方按钮，解释选中文本的含义
                 </div>
               )}
             </div>

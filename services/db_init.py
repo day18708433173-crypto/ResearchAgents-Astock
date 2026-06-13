@@ -177,6 +177,8 @@ def init_database():
     
     _ensure_debate_tables(conn)
     _ensure_dossier_commission_columns(conn)
+    _ensure_dossier_research_note_column(conn)
+    _ensure_strategy_alert_table(conn)
     conn.commit()
     conn.close()
     print(f"[DB] Database initialized at {DB_PATH}")
@@ -249,6 +251,42 @@ def _ensure_dossier_commission_columns(conn: sqlite3.Connection):
         conn.execute("ALTER TABLE dossier ADD COLUMN commission_min REAL")
     if "commission_rate" not in columns:
         conn.execute("ALTER TABLE dossier ADD COLUMN commission_rate REAL")
+
+
+def _ensure_dossier_research_note_column(conn: sqlite3.Connection):
+    """卷宗研究笔记：研究台右侧常驻笔记栏保存到股票卷宗。"""
+    columns = _table_columns(conn, "dossier")
+    if "research_note" not in columns:
+        conn.execute("ALTER TABLE dossier ADD COLUMN research_note TEXT DEFAULT ''")
+
+
+def _ensure_strategy_alert_table(conn: sqlite3.Connection):
+    """策略条件监控提醒表。"""
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS strategy_alert (
+            alert_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            dossier_id INTEGER NOT NULL,
+            version_id INTEGER NOT NULL,
+            section TEXT NOT NULL CHECK(section IN ('entry', 'exit')),
+            metric TEXT NOT NULL CHECK(metric IN ('price', 'pe_ttm', 'pb')),
+            condition_type TEXT NOT NULL CHECK(condition_type IN ('gte', 'lte')),
+            threshold REAL NOT NULL,
+            source_text TEXT DEFAULT '',
+            status TEXT DEFAULT 'watching' CHECK(status IN ('watching', 'near', 'triggered')),
+            is_active INTEGER DEFAULT 1,
+            created_at TEXT DEFAULT (datetime('now')),
+            updated_at TEXT DEFAULT (datetime('now')),
+            FOREIGN KEY (dossier_id) REFERENCES dossier(dossier_id),
+            FOREIGN KEY (version_id) REFERENCES strategy_version(version_id)
+        )
+    """)
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_strategy_alert_dossier ON strategy_alert(dossier_id, is_active)"
+    )
+
+    debate_columns = _table_columns(conn, "debate_record")
+    if debate_columns and "dossier_id" not in debate_columns:
+        conn.execute("ALTER TABLE debate_record ADD COLUMN dossier_id INTEGER")
 
 
 def get_db():

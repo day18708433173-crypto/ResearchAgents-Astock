@@ -6,7 +6,6 @@ Each source type has a different optimal chunk size and strategy:
 - industry_benchmark: Whole-document (single chunk per industry), max 1500 chars
 - announcement: Document-based (one chunk per announcement), max 800 chars
 - concept_definition: Whole-document (single chunk per concept), max 800 chars
-- debate_history: Summary-based (single chunk per debate), max 500 chars
 """
 
 import re
@@ -42,11 +41,6 @@ CHUNK_STRATEGIES: dict[str, dict] = {
         "max_chars": 800,
         "description": "金融概念定义，单篇",
     },
-    "debate_history": {
-        "method": "summary",
-        "max_chars": 500,
-        "description": "历史辩论摘要，单篇",
-    },
 }
 
 
@@ -80,9 +74,6 @@ def chunk_text(
 
     elif method == "document":
         chunks = _chunk_document(text, cfg, base_meta)
-
-    elif method == "summary":
-        chunks = _chunk_whole(text, cfg, base_meta)  # same as whole
 
     else:
         chunks = _chunk_whole(text, cfg, base_meta)

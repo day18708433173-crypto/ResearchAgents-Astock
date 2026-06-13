@@ -33,6 +33,7 @@ interface DebatePanelProps {
   streamingSide: 'bull' | 'bear' | null;
   streamingRound: number | null;
   onOpenCoach: () => void;
+  coachActive?: boolean;
 }
 
 export default function DebatePanel({
@@ -42,32 +43,33 @@ export default function DebatePanel({
   streamingSide,
   streamingRound,
   onOpenCoach,
+  coachActive = false,
 }: DebatePanelProps) {
   if (rounds.length === 0) return null;
 
   return (
     <div id="debate-content-area" className="mb-6">
-      {/* 策略教练按钮 */}
-      {judgeVerdict && (
+      {/* 策略审查入口（教练未自动展开时显示） */}
+      {judgeVerdict && !coachActive && (
         <div className="flex justify-end mb-4">
           <Button
             onClick={onOpenCoach}
             className="bg-[var(--jh-accent)] text-[var(--jh-bg)] hover:bg-[var(--jh-accent-2)] flex items-center gap-2"
           >
             <MessageSquare className="w-4 h-4" />
-            策略教练
+            策略审查
           </Button>
         </div>
       )}
 
-      {/* 三栏布局：多头-裁判-空头 */}
+      {/* 三栏布局：多头-裁决-空头 */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-        {/* 左侧：多头观点 */}
-        <Card data-knowledge-source="bull" className="bg-[var(--jh-surface)] border-[var(--jh-accent)] border-l-4 rounded-lg overflow-hidden">
+        {/* 左侧：多头纪要 */}
+        <Card data-knowledge-source="bull" className="bg-[var(--jh-surface)] border-[var(--jh-line)] border-l-4 border-l-[var(--jh-accent)] rounded-lg overflow-hidden shadow-none">
           <CardHeader className="pb-2">
-            <CardTitle className="text-base flex items-center gap-2 text-[var(--jh-accent)]">
+            <CardTitle className="text-base flex items-center gap-2 text-[var(--jh-text)]">
               <TrendingUp className="w-5 h-5" />
-              多头观点
+              多头研究纪要
             </CardTitle>
           </CardHeader>
           <CardContent>
@@ -75,7 +77,7 @@ export default function DebatePanel({
               {rounds.map((round) => (
                 <div key={round.round} className="mb-4 last:mb-0">
                   {(round.bull_content || (isStreaming && streamingSide === 'bull' && streamingRound === round.round)) && (
-                    <div className="p-3 bg-[rgba(99,230,208,0.08)] rounded-lg mb-2">
+                    <div className="p-3 bg-[var(--jh-bg-2)] rounded-md border border-[var(--jh-line)] mb-2">
                       <div className="text-xs text-[var(--jh-muted)] mb-1">第 {round.round} 轮</div>
                       <div className="text-sm text-[var(--jh-text)] debate-content">
                         {round.bull_content ? (
@@ -98,12 +100,12 @@ export default function DebatePanel({
         {/* 中间：裁判裁决 */}
         <Card
           data-knowledge-source="judge"
-          className="bg-[var(--jh-surface)] border border-[rgba(245,196,81,0.22)] rounded-xl overflow-hidden shadow-[0_0_28px_rgba(245,196,81,0.05)]"
+          className="bg-[var(--jh-surface)] border border-[var(--jh-line)] rounded-lg overflow-hidden shadow-none"
         >
-          <CardHeader className="pb-3 border-b border-[var(--jh-line)] bg-[rgba(245,196,81,0.05)]">
-            <CardTitle className="text-base flex items-center gap-2 text-[var(--jh-warm)]">
+          <CardHeader className="pb-3 border-b border-[var(--jh-line)] bg-[var(--jh-bg-2)]">
+            <CardTitle className="text-base flex items-center gap-2 text-[var(--jh-text)]">
               <Scale className="w-5 h-5" />
-              裁判裁决
+              裁决摘要
             </CardTitle>
           </CardHeader>
           <CardContent className="pt-4">
@@ -111,7 +113,7 @@ export default function DebatePanel({
               <ScrollArea className="h-[400px] pr-3">
                 <div className="space-y-4">
                   {/* 主结论：评级 + 置信度 + 质量×估值 */}
-                  <div className="rounded-xl border border-[rgba(245,196,81,0.18)] bg-gradient-to-br from-[rgba(245,196,81,0.09)] to-transparent p-4">
+                  <div className="rounded-md border border-[var(--jh-line)] bg-[var(--jh-bg-2)] p-4">
                     <div className="flex items-start justify-between gap-4">
                       <div>
                         <div className="text-[10px] uppercase tracking-wider text-[var(--jh-muted)] mb-1">投资评级</div>
@@ -129,12 +131,12 @@ export default function DebatePanel({
                     {(judgeVerdict.quality_assessment || judgeVerdict.valuation_assessment) && (
                       <div className="mt-3 flex flex-wrap gap-2">
                         {judgeVerdict.quality_assessment && (
-                          <span className="inline-flex items-center rounded-full border border-[var(--jh-line)] bg-[rgba(255,255,255,0.04)] px-2.5 py-0.5 text-xs text-[var(--jh-text-secondary)]">
+                          <span className="inline-flex items-center rounded-sm border border-[var(--jh-line)] bg-[rgba(255,255,255,0.04)] px-2.5 py-0.5 text-xs text-[var(--jh-text-secondary)]">
                             质量 · {judgeVerdict.quality_assessment}
                           </span>
                         )}
                         {judgeVerdict.valuation_assessment && (
-                          <span className="inline-flex items-center rounded-full border border-[var(--jh-line)] bg-[rgba(255,255,255,0.04)] px-2.5 py-0.5 text-xs text-[var(--jh-text-secondary)]">
+                          <span className="inline-flex items-center rounded-sm border border-[var(--jh-line)] bg-[rgba(255,255,255,0.04)] px-2.5 py-0.5 text-xs text-[var(--jh-text-secondary)]">
                             估值 · {judgeVerdict.valuation_assessment}
                           </span>
                         )}
@@ -157,7 +159,7 @@ export default function DebatePanel({
 
                   {/* 下一步建议 */}
                   {judgeVerdict.action_hint && (
-                    <div className="rounded-xl border border-[var(--jh-border-accent)] bg-[rgba(99,230,208,0.06)] p-3.5">
+                    <div className="rounded-md border border-[var(--jh-border-accent)] bg-[rgba(143,212,195,0.06)] p-3.5">
                       <div className="text-xs font-semibold text-[var(--jh-accent)] mb-1.5">下一步建议</div>
                       <p className="text-sm text-[var(--jh-text)] leading-relaxed">{judgeVerdict.action_hint}</p>
                     </div>
@@ -165,7 +167,7 @@ export default function DebatePanel({
 
                   {/* 信息缺口（直接展示） */}
                   {formatMissingInfo(judgeVerdict.missing_info) && (
-                    <div className="rounded-xl border border-[rgba(124,184,255,0.28)] bg-[rgba(124,184,255,0.06)] p-3.5">
+                    <div className="rounded-md border border-[rgba(134,167,213,0.28)] bg-[rgba(134,167,213,0.06)] p-3.5">
                       <div className="flex items-center gap-1.5 text-xs font-semibold text-[var(--jh-info)] mb-1.5">
                         <AlertCircle className="w-3.5 h-3.5 shrink-0" />
                         信息缺口
@@ -182,22 +184,22 @@ export default function DebatePanel({
                 {isStreaming ? (
                   <div className="flex items-center gap-2">
                     <Loader2 className="w-4 h-4 animate-spin" />
-                    裁判综合评判中...
+                    裁决摘要生成中...
                   </div>
                 ) : (
-                  '裁决尚未生成'
+                  '裁决摘要尚未生成'
                 )}
               </div>
             )}
           </CardContent>
         </Card>
 
-        {/* 右侧：空头观点 */}
-        <Card data-knowledge-source="bear" className="bg-[var(--jh-surface)] border-[var(--jh-danger)] border-l-4 rounded-lg overflow-hidden">
+        {/* 右侧：空头纪要 */}
+        <Card data-knowledge-source="bear" className="bg-[var(--jh-surface)] border-[var(--jh-line)] border-l-4 border-l-[var(--jh-danger)] rounded-lg overflow-hidden shadow-none">
           <CardHeader className="pb-2">
-            <CardTitle className="text-base flex items-center gap-2 text-[var(--jh-danger)]">
+            <CardTitle className="text-base flex items-center gap-2 text-[var(--jh-text)]">
               <TrendingDown className="w-5 h-5" />
-              空头观点
+              空头研究纪要
             </CardTitle>
           </CardHeader>
           <CardContent>
@@ -205,7 +207,7 @@ export default function DebatePanel({
               {rounds.map((round) => (
                 <div key={round.round} className="mb-4 last:mb-0">
                   {(round.bear_content || (isStreaming && streamingSide === 'bear' && streamingRound === round.round)) && (
-                    <div className="p-3 bg-[rgba(255,122,122,0.08)] rounded-lg mb-2">
+                    <div className="p-3 bg-[var(--jh-bg-2)] rounded-md border border-[var(--jh-line)] mb-2">
                       <div className="text-xs text-[var(--jh-muted)] mb-1">第 {round.round} 轮</div>
                       <div className="text-sm text-[var(--jh-text)] debate-content">
                         {round.bear_content ? (
