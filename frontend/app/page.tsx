@@ -28,6 +28,7 @@ import {
   clearUserLlmConfig,
   isUserLlmConfigComplete,
   LLM_PROVIDER_PRESETS,
+  resolveLlmProviderLabel,
   loadUserLlmConfig,
   normalizeUserLlmConfig,
   saveUserLlmConfig,
@@ -115,10 +116,7 @@ export default function HomePage() {
     const stored = loadUserLlmConfig();
     if (!stored) return;
     setLlmConfig(stored);
-    const preset = LLM_PROVIDER_PRESETS.find(
-      (item) => item.baseUrl === stored.baseUrl && item.model === stored.model
-    );
-    setSelectedProvider(preset?.label || "自定义");
+    setSelectedProvider(resolveLlmProviderLabel(stored));
     setLlmSaved(isUserLlmConfigComplete(stored));
   }, []);
 
@@ -216,7 +214,7 @@ export default function HomePage() {
                 <div className="min-w-0">
                   <h2 className="text-sm font-semibold text-[var(--jh-text)]">模型接入</h2>
                   <p className="mt-0.5 text-xs text-[var(--jh-text-muted)]">
-                    {llmSaved ? "正在使用个人模型配置" : "未保存个人模型配置"}
+                    {llmSaved ? "正在使用个人模型配置" : "填写后请点击保存，辩论与教练才会使用你的 Key"}
                   </p>
                 </div>
               </div>
@@ -260,9 +258,10 @@ export default function HomePage() {
                     <input
                       value={llmConfig.baseUrl}
                       onChange={(e) => {
-                        setSelectedProvider("自定义");
                         setLlmSaved(false);
-                        setLlmConfig((prev) => ({ ...prev, baseUrl: e.target.value }));
+                        const baseUrl = e.target.value;
+                        setLlmConfig((prev) => ({ ...prev, baseUrl }));
+                        setSelectedProvider(resolveLlmProviderLabel({ baseUrl }));
                       }}
                       placeholder="https://api.example.com/v1"
                       className="min-w-0 flex-1 bg-transparent px-3 text-sm text-[var(--jh-text)] placeholder:text-[var(--jh-text-muted)] outline-none"
@@ -275,11 +274,10 @@ export default function HomePage() {
                   <input
                     value={llmConfig.model}
                     onChange={(e) => {
-                      setSelectedProvider("自定义");
                       setLlmSaved(false);
                       setLlmConfig((prev) => ({ ...prev, model: e.target.value }));
                     }}
-                    placeholder="deepseek-chat"
+                    placeholder="deepseek-v4-flash"
                     className="h-10 w-full rounded-md border border-[var(--jh-border)] bg-[var(--jh-bg-2)] px-3 text-sm text-[var(--jh-text)] placeholder:text-[var(--jh-text-muted)] outline-none focus:border-[var(--jh-accent)]"
                   />
                 </label>

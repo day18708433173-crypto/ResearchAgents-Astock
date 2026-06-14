@@ -13,7 +13,7 @@ from pathlib import Path
 # ── 启动时加载 .env 文件到环境变量 ──
 load_dotenv(Path(__file__).parent.parent / ".env")
 
-Scenario = Literal["default", "debate", "coach"]
+Scenario = Literal["default", "debate", "coach", "judge", "knowledge"]
 
 # ── 模块级缓存：config 和 client 只初始化一次 ──
 _cached_config: dict | None = None
@@ -44,6 +44,10 @@ def _get_max_tokens(scenario: Scenario = "default") -> int:
         return cfg.get("max_tokens_debate", 1024)
     if scenario == "coach":
         return cfg.get("max_tokens_coach", 2048)
+    if scenario == "judge":
+        return cfg.get("max_tokens_judge", 1200)
+    if scenario == "knowledge":
+        return cfg.get("max_tokens_knowledge", 768)
     return cfg.get("max_tokens", 4096)
 
 

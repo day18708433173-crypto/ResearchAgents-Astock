@@ -2,13 +2,15 @@
 # LLM
 llm:
   provider: deepseek
-  model: deepseek-v4-pro           # 主力模型（辩论回合、复盘、画像）
+  model: deepseek-v4-flash           # 主力模型（辩论回合、复盘、画像）
   reasoning_model: deepseek-v4-pro  # 强推理模型（盲区扫描、事实校验）
   api_key: ${DEEPSEEK_API_KEY}
   base_url: https://api.deepseek.com/v1
   max_tokens: 4096
   max_tokens_debate: 1024   # 辩论单轮约 200 字；512 会触发 length 截断
+  max_tokens_judge: 1200    # 裁判 JSON 输出
   max_tokens_coach: 2048    # 策略教练回复
+  max_tokens_knowledge: 768 # 术语解释
   temperature: 0.7
 
 # 市场数据
@@ -17,7 +19,7 @@ market_data:
 
 # 辩论
 debate:
-  max_rounds: 1  # 测试用 1 轮；正式环境改回 3
+  max_rounds: 3
   cost_estimate_per_debate_usd: 0.03
   data_card_min_coverage: 60       # 数据卡覆盖率低于此值降级
   data_card_reject_coverage: 30    # 数据卡覆盖率低于此值拒绝

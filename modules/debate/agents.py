@@ -220,7 +220,7 @@ def build_coach_prompt(
 
     parts = [f"## 标的\n{ticker_name}（{ticker}）"]
     if data_card and data_card.get("fields"):
-        parts.append(f"\n## 数据卡\n{_format_data_card(data_card)}")
+        parts.append(f"\n## 数据卡（核心指标）\n{_format_judge_data_card(data_card)}")
     judge_text = _format_judge_for_coach(judge)
     if judge_text:
         parts.append(f"\n{judge_text}")
@@ -272,7 +272,11 @@ def build_debate_prompt(role: str, data_card: dict, opponent_msg: str = "",
         rag_context: RAG检索增强上下文
         focus_question: 用户指定的聚焦问题
     """
-    card_text = _format_data_card(data_card)
+    card_text = (
+        _format_data_card(data_card)
+        if round_num <= 1
+        else _format_judge_data_card(data_card)
+    )
 
     if role == "bull":
         system = BULL_SYSTEM
@@ -288,8 +292,8 @@ def build_debate_prompt(role: str, data_card: dict, opponent_msg: str = "",
 
     user = f"## 数据卡\n{card_text}\n\n"
 
-    # RAG 增强段落
-    if rag_context:
+    # RAG 增强段落（仅首轮注入，避免每轮重复大量上下文）
+    if rag_context and round_num <= 1:
         from services.rag.context_builder import build_enriched_prompt_section
         rag_section = build_enriched_prompt_section(rag_context)
         if rag_section:
@@ -435,7 +439,6 @@ def build_knowledge_prompt(
     ticker_name: str = "",
     question: str = "",
     history: list = None,
-    rag_reference: str = "",
 ) -> tuple[str, str]:
     """构建金融科普 Agent 的 Prompt"""
     system = KNOWLEDGE_AGENT_SYSTEM
@@ -451,9 +454,6 @@ def build_knowledge_prompt(
         parts.append(f"## 内容来源\n- 来源类型：{context_type}\n- 来源详情：{context_detail}")
     elif context_type != "debate":
         parts.append(f"## 内容来源\n- 来源类型：{context_type}")
-
-    if rag_reference:
-        parts.append(f"## 知识库参考\n{rag_reference}")
 
     if history:
         parts.append("## 最近对话")

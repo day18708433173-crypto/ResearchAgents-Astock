@@ -8,8 +8,10 @@
 - SSE实时输出
 """
 import json
+import logging
 import re
 import sqlite3
+import threading
 import time
 import yaml
 from pathlib import Path
@@ -23,6 +25,8 @@ from modules.debate.source_tagger import tag_output
 from modules.debate.fact_check import verify
 
 ROOT = Path(__file__).parent.parent.parent
+
+logger = logging.getLogger(__name__)
 
 
 def _resolve_max_rounds(coverage: int) -> int:
@@ -164,7 +168,7 @@ def run_debate(ticker: str, ticker_name: str = "",
             data_card=card,
             focus_question=focus_question,
         )
-        judge_raw = chat(judge_usr, system=judge_sys, llm_config=llm_config)
+        judge_raw = chat(judge_usr, system=judge_sys, scenario="judge", llm_config=llm_config)
         result["total_llm_calls"] += 1
         result["estimated_cost"] += cost_per_call
 
@@ -216,6 +220,7 @@ def stream_debate(
     ticker_name: str = "",
     focus_question: str = "",
     llm_config: Mapping[str, str] | None = None,
+    cancel_event: threading.Event | None = None,
 ) -> Generator[dict, None, None]:
     """流式辩论（实时推送每轮发言）
 
@@ -240,8 +245,14 @@ def stream_debate(
         "estimated_cost": 0.0,
     }
 
+    def _cancelled() -> bool:
+        return cancel_event is not None and cancel_event.is_set()
+
     # Step 1: 数据卡
     yield {"type": "status", "message": "正在生成数据卡..."}
+    if _cancelled():
+        logger.info("辩论已取消（客户端断开）")
+        return
     try:
         card = gen_data_card(ticker)
         result["data_card"] = card
@@ -253,6 +264,10 @@ def stream_debate(
 
     if card["coverage"] < 30:
         yield {"type": "error", "message": f"数据覆盖率仅{card['coverage']}%，不足30%，无法辩论"}
+        return
+
+    if _cancelled():
+        logger.info("辩论已取消（客户端断开）")
         return
 
     # RAG增强
@@ -274,6 +289,10 @@ def stream_debate(
     cost_per_call = 0.003
 
     for r in range(1, max_rounds + 1):
+        if _cancelled():
+            logger.info("辩论已取消（客户端断开），停在第 %d 轮之前", r)
+            return
+
         yield {"type": "round_start", "round": r}
 
         # Bull发言（token 级流式）
@@ -282,6 +301,9 @@ def stream_debate(
             sys_bull, user_bull = build_debate_prompt("bull", card, bear_msg, r, rag_context, focus_question)
             bull_raw = ""
             for token in stream_chat(user_bull, system=sys_bull, scenario="debate", llm_config=llm_config):
+                if _cancelled():
+                    logger.info("辩论已取消（客户端断开），中断多头发言")
+                    return
                 bull_raw += token
                 yield {"type": "bull_token", "round": r, "delta": token}
             bull_msg = _strip_html(bull_raw)
@@ -298,6 +320,9 @@ def stream_debate(
             sys_bear, user_bear = build_debate_prompt("bear", card, bull_msg, r, rag_context, focus_question)
             bear_raw = ""
             for token in stream_chat(user_bear, system=sys_bear, scenario="debate", llm_config=llm_config):
+                if _cancelled():
+                    logger.info("辩论已取消（客户端断开），中断空头发言")
+                    return
                 bear_raw += token
                 yield {"type": "bear_token", "round": r, "delta": token}
             bear_msg = _strip_html(bear_raw)
@@ -316,6 +341,10 @@ def stream_debate(
 
         time.sleep(0.1)  # 短暂延迟让前端有时间渲染
 
+    if _cancelled():
+        logger.info("辩论已取消（客户端断开），跳过裁判")
+        return
+
     # 裁判裁决
     yield {"type": "status", "message": "裁判正在综合评判..."}
     try:
@@ -325,7 +354,7 @@ def stream_debate(
             data_card=card,
             focus_question=focus_question,
         )
-        judge_raw = chat(judge_usr, system=judge_sys, llm_config=llm_config)
+        judge_raw = chat(judge_usr, system=judge_sys, scenario="judge", llm_config=llm_config)
         result["total_llm_calls"] += 1
         result["estimated_cost"] += cost_per_call
 
@@ -343,6 +372,191 @@ def stream_debate(
     debate_id = _save_debate_log(result)
     result["debate_id"] = debate_id
     yield {"type": "complete", "data": result}
+
+
+# ═══════════════════════════════════════════════
+#  分轮辩论模式（轮间暂停）
+# ═══════════════════════════════════════════════
+
+def stream_single_round(
+    ticker: str,
+    ticker_name: str = "",
+    round_num: int = 1,
+    debate_id: Optional[int] = None,
+    focus_question: str = "",
+    supplement_data: Optional[dict] = None,
+    llm_config: Mapping[str, str] | None = None,
+    cancel_event: threading.Event | None = None,
+) -> Generator[dict, None, None]:
+    """执行单轮辩论（轮间暂停模式）。
+
+    - round_num=1 且 debate_id=None：生成数据卡、创建辩论记录，再执行第一轮
+    - round_num>1 且 debate_id 已知：从 DB 加载数据卡和上一轮发言，执行下一轮
+
+    Yields:
+        - {"type": "status", "message": "..."}
+        - {"type": "data_card", "data": {...}}  (仅第1轮)
+        - {"type": "round_start", "round": N}
+        - {"type": "bull_token", "round": N, "delta": "..."}
+        - {"type": "bull_speak", "round": N, "content": "..."}
+        - {"type": "bear_token", "round": N, "delta": "..."}
+        - {"type": "bear_speak", "round": N, "content": "..."}
+        - {"type": "round_complete", "round": N, "debate_id": ID, "max_rounds_suggested": M}
+        - {"type": "error", "message": "..."}
+    """
+
+    def _cancelled() -> bool:
+        return cancel_event is not None and cancel_event.is_set()
+
+    # ── 数据卡准备 ──────────────────────────────
+    if debate_id is None:
+        yield {"type": "status", "message": "正在生成数据卡..."}
+        if _cancelled():
+            return
+        try:
+            card = gen_data_card(ticker)
+        except Exception as e:
+            yield {"type": "error", "message": f"数据卡生成失败: {e}"}
+            return
+
+        if supplement_data:
+            for k, v in supplement_data.items():
+                card["fields"][k] = {"value": v, "grade": "U", "source": "用户补充"}
+
+        if card["coverage"] < 30:
+            yield {"type": "error", "message": f"数据覆盖率仅{card['coverage']}%，不足30%，无法辩论"}
+            return
+
+        yield {"type": "data_card", "data": card}
+
+        rag_context = None
+        try:
+            from services.rag.context_builder import enrich_data_card
+            rag_context = enrich_data_card(ticker, card)
+            yield {"type": "status", "message": "RAG知识增强完成"}
+        except Exception:
+            pass
+
+        data_card_id = _save_data_card(card)
+        debate_id = _create_debate_record(ticker, ticker_name, data_card_id)
+        prev_bull = ""
+        prev_bear = ""
+    else:
+        card, rag_context = _load_data_card_for_debate(debate_id)
+        if supplement_data:
+            for k, v in supplement_data.items():
+                card["fields"][k] = {"value": v, "grade": "U", "source": "用户补充"}
+            yield {"type": "data_card_update", "data": {"fields": card["fields"], "coverage": card["coverage"]}}
+        prev_bull, prev_bear = _load_last_round_content(debate_id)
+
+    if _cancelled():
+        return
+
+    max_suggested = _resolve_max_rounds(card["coverage"])
+
+    yield {"type": "round_start", "round": round_num}
+
+    # ── 多头发言 ─────────────────────────────────
+    yield {"type": "status", "message": f"多头第{round_num}轮发言..."}
+    bull_msg = ""
+    try:
+        sys_bull, user_bull = build_debate_prompt("bull", card, prev_bear, round_num, rag_context, focus_question)
+        bull_raw = ""
+        for token in stream_chat(user_bull, system=sys_bull, scenario="debate", llm_config=llm_config):
+            if _cancelled():
+                return
+            bull_raw += token
+            yield {"type": "bull_token", "round": round_num, "delta": token}
+        bull_msg = _strip_html(bull_raw)
+        yield {"type": "bull_speak", "round": round_num, "content": bull_msg}
+    except Exception as e:
+        bull_msg = f"[生成失败: {e}]"
+        yield {"type": "bull_speak", "round": round_num, "content": bull_msg}
+
+    if _cancelled():
+        return
+
+    # ── 空头发言 ─────────────────────────────────
+    yield {"type": "status", "message": f"空头第{round_num}轮发言..."}
+    bear_msg = ""
+    try:
+        sys_bear, user_bear = build_debate_prompt("bear", card, bull_msg, round_num, rag_context, focus_question)
+        bear_raw = ""
+        for token in stream_chat(user_bear, system=sys_bear, scenario="debate", llm_config=llm_config):
+            if _cancelled():
+                return
+            bear_raw += token
+            yield {"type": "bear_token", "round": round_num, "delta": token}
+        bear_msg = _strip_html(bear_raw)
+        yield {"type": "bear_speak", "round": round_num, "content": bear_msg}
+    except Exception as e:
+        bear_msg = f"[生成失败: {e}]"
+        yield {"type": "bear_speak", "round": round_num, "content": bear_msg}
+
+    # ── 保存本轮到 DB ─────────────────────────────
+    _append_round_to_debate(debate_id, {"round": round_num, "bull": bull_msg, "bear": bear_msg})
+
+    yield {
+        "type": "round_complete",
+        "round": round_num,
+        "debate_id": debate_id,
+        "max_rounds_suggested": max_suggested,
+    }
+
+
+def stream_judge_verdict(
+    ticker: str,
+    ticker_name: str = "",
+    debate_id: int = None,
+    focus_question: str = "",
+    llm_config: Mapping[str, str] | None = None,
+    cancel_event: threading.Event | None = None,
+) -> Generator[dict, None, None]:
+    """从 DB 加载轮次，执行裁判裁决，更新 DB。
+
+    Yields:
+        - {"type": "status", "message": "..."}
+        - {"type": "judge", "data": {...}}
+        - {"type": "complete", "data": {"debate_id": ID}}
+        - {"type": "error", "message": "..."}
+    """
+
+    def _cancelled() -> bool:
+        return cancel_event is not None and cancel_event.is_set()
+
+    yield {"type": "status", "message": "正在加载辩论数据..."}
+
+    rounds, card, rag_context = _load_debate_rounds(debate_id)
+    if not rounds:
+        yield {"type": "error", "message": "没有找到辩论轮次，请先完成至少一轮辩论"}
+        return
+
+    if _cancelled():
+        return
+
+    yield {"type": "status", "message": "裁判正在综合评判..."}
+    try:
+        judge_sys, judge_usr = build_judge_prompt(
+            ticker=ticker,
+            name=ticker_name,
+            rounds=rounds,
+            rag_context=rag_context,
+            data_card=card,
+            focus_question=focus_question,
+        )
+        judge_raw = chat(judge_usr, system=judge_sys, scenario="judge", llm_config=llm_config)
+
+        judge_json_match = re.search(r'\{[\s\S]*\}', judge_raw)
+        if judge_json_match:
+            judge_verdict = json.loads(judge_json_match.group())
+        else:
+            judge_verdict = {"rating": "持有", "confidence": 0.5, "summary": judge_raw[:500]}
+
+        _update_judge_verdict(debate_id, judge_verdict)
+        yield {"type": "judge", "data": judge_verdict}
+        yield {"type": "complete", "data": {"debate_id": debate_id}}
+    except Exception as e:
+        yield {"type": "error", "message": f"裁判失败: {e}"}
 
 
 # ═══════════════════════════════════════════════
@@ -430,6 +644,138 @@ def _save_agent_conversation(debate_id: int, round_data: dict):
     conn.execute(
         "INSERT INTO agent_conversation (debate_id, round_num, agent_role, content) VALUES (?, ?, ?, ?)",
         (debate_id, round_data.get("round", 1), "bear", round_data.get("bear", "")),
+    )
+    conn.commit()
+    conn.close()
+
+
+def _create_debate_record(ticker: str, ticker_name: str, data_card_id: Optional[int]) -> int:
+    """创建空白辩论记录（分轮模式用），返回 debate_id。"""
+    from services.db_init import get_db
+    conn = get_db()
+    cur = conn.execute(
+        """INSERT INTO debate_record
+           (ticker, ticker_name, template_id, coverage, rounds, data_card_id,
+            judge_verdict, accuracy_grade, total_llm_calls, estimated_cost)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (ticker, ticker_name, "", 0, "[]", data_card_id, "{}", "B", 0, 0.0),
+    )
+    conn.commit()
+    debate_id = cur.lastrowid
+    conn.close()
+    return debate_id
+
+
+def _load_data_card_for_debate(debate_id: int) -> tuple[dict, object]:
+    """从 DB 加载 debate 对应的 data_card。返回 (card_dict, rag_context=None)。"""
+    from services.db_init import get_db
+    conn = get_db()
+    row = conn.execute(
+        "SELECT data_card_id, coverage FROM debate_record WHERE id = ?", (debate_id,)
+    ).fetchone()
+    if not row:
+        conn.close()
+        return {"ticker": "", "coverage": 0, "fields": {}}, None
+
+    data_card_id = row["data_card_id"]
+    if data_card_id:
+        card_row = conn.execute(
+            "SELECT ticker, coverage, fields FROM data_cards WHERE id = ?", (data_card_id,)
+        ).fetchone()
+        conn.close()
+        if card_row:
+            try:
+                fields = json.loads(card_row["fields"] or "{}")
+            except Exception:
+                fields = {}
+            return {"ticker": card_row["ticker"], "coverage": card_row["coverage"], "fields": fields}, None
+    conn.close()
+    return {"ticker": "", "coverage": row["coverage"] or 0, "fields": {}}, None
+
+
+def _load_last_round_content(debate_id: int) -> tuple[str, str]:
+    """加载最新一轮的 bull/bear 内容，供下一轮 prompt 使用。"""
+    from services.db_init import get_db
+    conn = get_db()
+    row = conn.execute("SELECT rounds FROM debate_record WHERE id = ?", (debate_id,)).fetchone()
+    conn.close()
+    if not row:
+        return "", ""
+    try:
+        rounds = json.loads(row["rounds"] or "[]")
+        if rounds:
+            last = rounds[-1]
+            return last.get("bull", ""), last.get("bear", "")
+    except Exception:
+        pass
+    return "", ""
+
+
+def _append_round_to_debate(debate_id: int, round_data: dict):
+    """将新一轮追加到 debate_record.rounds，并同步 agent_conversation。"""
+    from services.db_init import get_db
+    conn = get_db()
+    row = conn.execute("SELECT rounds FROM debate_record WHERE id = ?", (debate_id,)).fetchone()
+    if not row:
+        conn.close()
+        return
+    try:
+        rounds = json.loads(row["rounds"] or "[]")
+    except Exception:
+        rounds = []
+
+    rounds = [r for r in rounds if r.get("round") != round_data.get("round")]
+    rounds.append(round_data)
+    rounds.sort(key=lambda r: r.get("round", 0))
+
+    conn.execute(
+        "UPDATE debate_record SET rounds = ? WHERE id = ?",
+        (json.dumps(rounds, ensure_ascii=False), debate_id),
+    )
+    conn.commit()
+    conn.close()
+    _save_agent_conversation(debate_id, round_data)
+
+
+def _load_debate_rounds(debate_id: int) -> tuple[list, dict, object]:
+    """加载辩论所有轮次、数据卡。返回 (rounds, card, rag_context=None)。"""
+    from services.db_init import get_db
+    conn = get_db()
+    row = conn.execute(
+        "SELECT rounds, data_card_id, coverage FROM debate_record WHERE id = ?", (debate_id,)
+    ).fetchone()
+    if not row:
+        conn.close()
+        return [], {"coverage": 0, "fields": {}}, None
+
+    try:
+        rounds = json.loads(row["rounds"] or "[]")
+    except Exception:
+        rounds = []
+
+    data_card_id = row["data_card_id"]
+    card = {"coverage": row["coverage"] or 0, "fields": {}}
+    if data_card_id:
+        card_row = conn.execute(
+            "SELECT ticker, coverage, fields FROM data_cards WHERE id = ?", (data_card_id,)
+        ).fetchone()
+        if card_row:
+            try:
+                fields = json.loads(card_row["fields"] or "{}")
+            except Exception:
+                fields = {}
+            card = {"ticker": card_row["ticker"], "coverage": card_row["coverage"], "fields": fields}
+    conn.close()
+    return rounds, card, None
+
+
+def _update_judge_verdict(debate_id: int, verdict: dict):
+    """更新裁判裁决到 DB。"""
+    from services.db_init import get_db
+    conn = get_db()
+    conn.execute(
+        "UPDATE debate_record SET judge_verdict = ? WHERE id = ?",
+        (json.dumps(verdict, ensure_ascii=False), debate_id),
     )
     conn.commit()
     conn.close()

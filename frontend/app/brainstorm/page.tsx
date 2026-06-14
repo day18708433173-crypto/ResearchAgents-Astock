@@ -10,7 +10,8 @@ import { Badge } from '@/components/ui/badge';
 import {
   Activity, Database, Search, Scale,
   Loader2,
-  MessageSquare, X, BookOpen, Clock, StickyNote
+  MessageSquare, X, BookOpen, Clock, StickyNote,
+  ChevronRight, Gavel,
 } from 'lucide-react';
 import {
   askKnowledge,
@@ -170,6 +171,7 @@ export default function BrainstormPage() {
   const { toast } = useToast();
   const knowledgeInputRef = useRef<HTMLInputElement>(null);
   const knowledgeAnchorRef = useRef('');
+  const coachAbortRef = useRef<AbortController | null>(null);
   const resizeRef = useRef<{
     pane: 'left' | 'right' | null;
     startX: number;
@@ -200,7 +202,10 @@ export default function BrainstormPage() {
   const [coachSuggestedQuestions, setCoachSuggestedQuestions] = useState<string[]>([]);
   const [canSaveCoachStrategy, setCanSaveCoachStrategy] = useState(false);
   const [savedCoachDossierId, setSavedCoachDossierId] = useState<number | null>(null);
-  const [focusQuestion, setFocusQuestion] = useState('');
+  // 轮间暂停：下一轮的聚焦问题
+  const [nextFocusQuestion, setNextFocusQuestion] = useState('');
+  // 首轮开始时用的聚焦问题
+  const [firstRoundFocusQuestion, setFirstRoundFocusQuestion] = useState('');
 
   // 金融科普Agent
   const [showKnowledgePanel, setShowKnowledgePanel] = useState(false);
@@ -257,8 +262,9 @@ export default function BrainstormPage() {
     }
   };
 
-  // 辩论 SSE 流（状态 + 启停）
+  // 辩论 SSE 流（分轮模式）
   const {
+    phase,
     isStreaming,
     streamingSide,
     streamingRound,
@@ -274,8 +280,13 @@ export default function BrainstormPage() {
     setDataCardFields,
     currentDebateId,
     setCurrentDebateId,
-    startDebate,
+    currentRoundNum,
+    maxRoundsSuggested,
+    startFirstRound,
+    continueNextRound,
+    requestJudge,
     stopDebate,
+    resetDebate,
   } = useDebateStream({
     onDebateStart: () => {
       setCoachMessages([]);
@@ -284,12 +295,19 @@ export default function BrainstormPage() {
       setCoachState('opening');
       setShowCoachPanel(false);
     },
+    onRoundComplete: (_round, _debateId) => {
+      setNextFocusQuestion('');
+    },
     onComplete: () => {
       refreshDebateHistory();
     },
     toast,
-    focusQuestion,
   });
+
+  // 派生状态——必须在所有 useEffect 之前声明，避免暂时性死区
+  const isIdle = rounds.length === 0 && phase === 'idle';
+  const isPaused = phase === 'paused';
+  const isDone = phase === 'done';
 
   useEffect(() => {
     if (!showCoachPanel && !showKnowledgePanel) return;
@@ -303,19 +321,16 @@ export default function BrainstormPage() {
     return () => document.removeEventListener('keydown', onEsc);
   }, [showCoachPanel, showKnowledgePanel]);
 
-  useEffect(() => {
-    if (judgeVerdict && !isStreaming && selectedStock && currentDebateId && coachMessages.length === 0) {
-      initCoachAfterDebate(judgeVerdict);
-    }
-  }, [judgeVerdict, isStreaming, selectedStock, currentDebateId, coachMessages.length, rounds]);
-
   // 最近辩论：优先后端记录，本地仅作离线兜底
   useEffect(() => {
     refreshDebateHistory();
+    return () => {
+      coachAbortRef.current?.abort();
+    };
   }, []);
 
   useEffect(() => {
-    if (!judgeVerdict || isStreaming || !selectedStock || !currentDebateId) return;
+    if (!judgeVerdict || !isDone || !selectedStock || !currentDebateId) return;
 
     const debateKey = `${currentDebateId}-${selectedStock.ts_code}`;
     if (debateKey === savedDebateKey) return;
@@ -337,7 +352,7 @@ export default function BrainstormPage() {
       return merged;
     });
     setSavedDebateKey(debateKey);
-  }, [judgeVerdict, isStreaming, selectedStock, currentDebateId, coverage, rounds.length, savedDebateKey]);
+  }, [judgeVerdict, isDone, selectedStock, currentDebateId, coverage, rounds.length, savedDebateKey]);
 
   useEffect(() => {
     if (autoLoadedTicker) return;
@@ -402,9 +417,7 @@ export default function BrainstormPage() {
     setCoverage(item.coverage || 0);
     setStatusMessage(item.summary ? `最近裁决：${item.rating || '已完成'} · ${item.summary}` : '已载入历史股票，可直接生成新研究纪要');
     setCurrentDebateId(null);
-    setRounds([]);
-    setJudgeVerdict(null);
-    setDataCardFields({});
+    resetDebate();
     setCoachMessages([]);
     setCoachSuggestedQuestions([]);
     setCanSaveCoachStrategy(false);
@@ -485,6 +498,10 @@ export default function BrainstormPage() {
     requestBody: Record<string, unknown>,
     baseMessages: CoachMessage[]
   ) => {
+    coachAbortRef.current?.abort();
+    const abortController = new AbortController();
+    coachAbortRef.current = abortController;
+
     const messagesWithPlaceholder: CoachMessage[] = [
       ...baseMessages,
       { role: 'coach', content: '', timestamp: new Date() },
@@ -510,18 +527,13 @@ export default function BrainstormPage() {
         }
 
         if (event.type === 'done') {
-          setCoachMessages((prev) => {
-            const updated = [...prev];
-            const last = updated[updated.length - 1];
-            if (last?.role === 'coach') {
-              updated[updated.length - 1] = {
-                ...last,
-                content: event.reply || last.content,
-              };
-            }
-            saveCoachTranscript(currentDebateId, updated);
-            return updated;
-          });
+          const reply = event.reply || '';
+          const savedMessages: CoachMessage[] = [
+            ...baseMessages,
+            { role: 'coach', content: reply, timestamp: new Date() },
+          ];
+          setCoachMessages(savedMessages);
+          saveCoachTranscript(currentDebateId, savedMessages);
           applyCoachDoneMeta(event);
           return;
         }
@@ -529,8 +541,9 @@ export default function BrainstormPage() {
         if (event.type === 'error') {
           throw new Error(event.message || '教练流式输出失败');
         }
-      });
+      }, abortController.signal);
     } catch (err) {
+      if (err instanceof Error && err.name === 'AbortError') return;
       console.error('策略审查流式对话失败:', err);
       toast('策略审查回复失败，请重试', 'error');
       setCoachMessages((prev) => {
@@ -545,6 +558,9 @@ export default function BrainstormPage() {
         return updated;
       });
     } finally {
+      if (coachAbortRef.current === abortController) {
+        coachAbortRef.current = null;
+      }
       setIsCoachLoading(false);
     }
   };
@@ -656,23 +672,19 @@ export default function BrainstormPage() {
     return () => document.removeEventListener('mouseup', handleMouseUp);
   }, []);
   
-  // 金融科普Agent - 发送提问
-  const handleKnowledgeAsk = async (customText?: string) => {
-    const anchorText = customText || selectedKnowledgeText;
+  // 金融科普Agent - 发送提问（使用选中文本 + 默认解释问题）
+  const handleKnowledgeAsk = async () => {
+    const anchorText = knowledgeAnchorRef.current || selectedKnowledgeText;
     if (!anchorText.trim()) return;
-
-    if (knowledgeAnchorRef.current !== anchorText) {
-      setKnowledgeMessages([]);
-      knowledgeAnchorRef.current = anchorText;
-    }
     
     setShowKnowledgeButton(false);
     setShowKnowledgePanel(true);
     setIsKnowledgeLoading(true);
-    
+
+    const defaultQuestion = `请解释「${anchorText}」的含义和投资意义。`;
     const userMessage: KnowledgeMessage = {
       role: 'user',
-      content: anchorText,
+      content: defaultQuestion,
       timestamp: new Date()
     };
     const historyForApi: ApiKnowledgeMessage[] = knowledgeMessages.map((m) => ({
@@ -687,7 +699,7 @@ export default function BrainstormPage() {
         context: selectedContext,
         ticker: selectedStock?.ts_code || '',
         ticker_name: selectedStock?.name || '',
-        question: `请解释「${anchorText}」的含义和投资意义。`,
+        question: defaultQuestion,
         history: historyForApi,
       });
       
@@ -751,14 +763,28 @@ export default function BrainstormPage() {
     }
   };
   
-  // 开始辩论（流式输出）
-  const handleStartDebate = () => {
-    void startDebate(selectedStock);
+  // 开始第一轮
+  const handleStartFirstRound = () => {
+    if (!selectedStock) return;
+    void startFirstRound(selectedStock, firstRoundFocusQuestion);
   };
-  
+
+  // 继续下一轮
+  const handleContinueRound = () => {
+    if (!selectedStock || !currentDebateId) return;
+    void continueNextRound(selectedStock, currentDebateId, currentRoundNum + 1, nextFocusQuestion);
+  };
+
+  // 请求裁判
+  const handleRequestJudge = () => {
+    if (!selectedStock || !currentDebateId) return;
+    void requestJudge(selectedStock, currentDebateId, nextFocusQuestion);
+  };
+
   const handleStopDebate = () => {
     stopDebate();
   };
+
   
   const startResize = (pane: 'left' | 'right', event: React.MouseEvent<HTMLDivElement>) => {
     resizeRef.current = {
@@ -770,7 +796,6 @@ export default function BrainstormPage() {
     event.preventDefault();
   };
 
-  const isIdle = rounds.length === 0 && !isStreaming;
   const showNotesPane = showRightPane && !!selectedStock && !showCoachPanel;
 
   return (
@@ -902,35 +927,40 @@ export default function BrainstormPage() {
 
                         <div className="pt-1 border-t border-[var(--jh-border)]">
                           <div className="mb-3 text-xs font-medium text-[var(--jh-text-secondary)]">生成多空研究纪要</div>
-                          <Input
-                            placeholder="聚焦问题（可选），如：当前估值是否偏贵？"
-                            value={focusQuestion}
-                            onChange={(e) => setFocusQuestion(e.target.value)}
-                            className="mb-2 text-xs"
-                            disabled={isStreaming}
-                          />
-                          <div className="flex flex-wrap items-center gap-2">
-                            <Button
-                              onClick={handleStartDebate}
+                          {isIdle && (
+                            <Input
+                              placeholder="聚焦问题（可选），如：当前估值是否偏贵？"
+                              value={firstRoundFocusQuestion}
+                              onChange={(e) => setFirstRoundFocusQuestion(e.target.value)}
+                              className="mb-2 text-xs"
                               disabled={isStreaming}
-                              size="sm"
-                              className="bg-[var(--jh-accent)] text-[var(--jh-bg)] hover:bg-[var(--jh-accent-2)]"
-                            >
-                              {isStreaming ? (
-                                <>
-                                  <Loader2 className="w-3.5 h-3.5 animate-spin mr-1.5" />
-                                  生成中...
-                                </>
-                              ) : (
-                                <>
-                                  <Scale className="w-3.5 h-3.5 mr-1.5" />
-                                  生成研究纪要
-                                </>
-                              )}
-                            </Button>
+                            />
+                          )}
+                          <div className="flex flex-wrap items-center gap-2">
+                            {isIdle && (
+                              <Button
+                                onClick={handleStartFirstRound}
+                                disabled={isStreaming}
+                                size="sm"
+                                className="bg-[var(--jh-accent)] text-[var(--jh-bg)] hover:bg-[var(--jh-accent-2)]"
+                              >
+                                <Scale className="w-3.5 h-3.5 mr-1.5" />
+                                开始第一轮
+                              </Button>
+                            )}
                             {isStreaming && (
                               <Button variant="outline" size="sm" onClick={handleStopDebate}>
                                 停止
+                              </Button>
+                            )}
+                            {(isPaused || isDone) && (
+                              <Button
+                                onClick={() => { resetDebate(); setFirstRoundFocusQuestion(''); }}
+                                variant="outline"
+                                size="sm"
+                                className="text-xs"
+                              >
+                                重新开始
                               </Button>
                             )}
                           </div>
@@ -1005,24 +1035,37 @@ export default function BrainstormPage() {
             )}
 
             <section className="min-w-0 flex-1 xl:px-3">
-              {judgeVerdict && !isStreaming && showCoachPanel && (
+              {/* 裁判完成后的策略审查入口 */}
+              {judgeVerdict && isDone && (
                 <div className="mb-5 rounded-md border border-[var(--jh-border-accent)] bg-[rgba(143,212,195,0.06)] px-4 py-3 flex items-center justify-between gap-3">
                   <div className="flex items-center gap-2 text-sm text-[var(--jh-text-secondary)]">
-                    <MessageSquare className="w-4 h-4 text-[var(--jh-accent)]" />
+                    <Gavel className="w-4 h-4 text-[var(--jh-accent)]" />
                     <span>
-                      研究纪要已完成（评级 <strong className="text-[var(--jh-text)]">{judgeVerdict.rating}</strong>），策略审查已自动开启
+                      裁决完成（评级 <strong className="text-[var(--jh-text)]">{judgeVerdict.rating}</strong>），可开启策略审查
                     </span>
                   </div>
-                  {savedCoachDossierId && (
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => router.push(`/dossier/${savedCoachDossierId}`)}
-                      className="border-[var(--jh-line)] text-xs shrink-0"
-                    >
-                      查看已保存策略
-                    </Button>
-                  )}
+                  <div className="flex items-center gap-2 shrink-0">
+                    {savedCoachDossierId && (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => router.push(`/dossier/${savedCoachDossierId}`)}
+                        className="border-[var(--jh-line)] text-xs"
+                      >
+                        查看已保存策略
+                      </Button>
+                    )}
+                    {!showCoachPanel && (
+                      <Button
+                        size="sm"
+                        onClick={() => { setShowCoachPanel(true); if (coachMessages.length === 0) void initCoachAfterDebate(judgeVerdict); }}
+                        className="bg-[var(--jh-accent)] text-[var(--jh-bg)] hover:bg-[var(--jh-accent-2)]"
+                      >
+                        <MessageSquare className="w-3.5 h-3.5 mr-1.5" />
+                        策略审查
+                      </Button>
+                    )}
+                  </div>
                 </div>
               )}
 
@@ -1032,9 +1075,76 @@ export default function BrainstormPage() {
                 isStreaming={isStreaming}
                 streamingSide={streamingSide}
                 streamingRound={streamingRound}
-                onOpenCoach={() => setShowCoachPanel(true)}
+                onOpenCoach={() => {
+                  setShowCoachPanel(true);
+                  if (coachMessages.length === 0 && judgeVerdict) void initCoachAfterDebate(judgeVerdict);
+                }}
                 coachActive={showCoachPanel}
+                phase={phase}
               />
+
+              {/* 轮间暂停 UI */}
+              {isPaused && selectedStock && currentDebateId && (
+                <section className="terminal-panel mt-5 overflow-hidden">
+                  <div className="border-b border-[var(--jh-border)] px-4 py-3 flex items-center justify-between gap-3">
+                    <div className="flex items-center gap-2">
+                      <Scale className="w-4 h-4 text-[var(--jh-accent)]" />
+                      <span className="text-sm font-semibold text-[var(--jh-text)]">
+                        第 {currentRoundNum} 轮完成
+                      </span>
+                      <span className="text-xs text-[var(--jh-text-muted)]">
+                        · 建议共 {maxRoundsSuggested} 轮
+                      </span>
+                    </div>
+                  </div>
+                  <div className="p-4 space-y-4">
+                    {/* 下一轮聚焦问题 */}
+                    <div>
+                      <div className="text-xs font-medium text-[var(--jh-text-secondary)] mb-2">
+                        下一轮聚焦问题（可选）
+                      </div>
+                      <Input
+                        placeholder="如：分红率是否可靠？也可补充数据，如：PE=15、净利润增速=20%"
+                        value={nextFocusQuestion}
+                        onChange={(e) => setNextFocusQuestion(e.target.value)}
+                        className="text-xs"
+                        disabled={isStreaming}
+                      />
+                    </div>
+
+                    {/* 操作按钮 */}
+                    <div className="flex flex-wrap items-center gap-2 pt-1">
+                      <Button
+                        onClick={handleContinueRound}
+                        disabled={isStreaming}
+                        size="sm"
+                        className="bg-[var(--jh-accent)] text-[var(--jh-bg)] hover:bg-[var(--jh-accent-2)]"
+                      >
+                        {isStreaming ? (
+                          <><Loader2 className="w-3.5 h-3.5 animate-spin mr-1.5" />生成中...</>
+                        ) : (
+                          <><ChevronRight className="w-3.5 h-3.5 mr-1" />继续第 {currentRoundNum + 1} 轮</>
+                        )}
+                      </Button>
+                      <Button
+                        onClick={handleRequestJudge}
+                        disabled={isStreaming}
+                        variant="outline"
+                        size="sm"
+                        className="border-[var(--jh-border-accent)] text-[var(--jh-accent)]"
+                      >
+                        <Gavel className="w-3.5 h-3.5 mr-1.5" />
+                        请求裁决
+                      </Button>
+                      {isStreaming && (
+                        <Button variant="outline" size="sm" onClick={handleStopDebate}>
+                          停止
+                        </Button>
+                      )}
+                    </div>
+                  </div>
+                </section>
+              )}
 
               {isIdle && (
                 <>
@@ -1048,22 +1158,22 @@ export default function BrainstormPage() {
                         <Scale className="mx-auto mb-4 w-10 h-10 text-[var(--jh-accent)]/70" />
                         <h2 className="text-lg font-semibold text-[var(--jh-text)]">准备生成研究纪要</h2>
                         <p className="mt-2 text-sm text-[var(--jh-text-muted)] leading-relaxed">
-                          AI 将基于数据卡展开多空辩论，完成后自动进入策略审查。
+                          AI 将基于数据卡展开多空辩论，每轮完成后可指定聚焦问题引导下一轮方向。
                         </p>
                         <Input
-                          placeholder="聚焦问题（可选），如：分红率是否可持续？"
-                          value={focusQuestion}
-                          onChange={(e) => setFocusQuestion(e.target.value)}
+                          placeholder="聚焦问题（可选），如：分红率是否可持续？也可直接补充数据，如：PE=15、净利润增速=20%"
+                          value={firstRoundFocusQuestion}
+                          onChange={(e) => setFirstRoundFocusQuestion(e.target.value)}
                           className="mt-4 max-w-sm mx-auto text-sm"
                           disabled={isStreaming}
                         />
                         <Button
-                          onClick={handleStartDebate}
+                          onClick={handleStartFirstRound}
                           disabled={isStreaming}
                           className="mt-6 bg-[var(--jh-accent)] text-[var(--jh-bg)] hover:bg-[var(--jh-accent-2)]"
                         >
                           <Scale className="w-4 h-4 mr-2" />
-                          生成研究纪要
+                          开始第一轮
                         </Button>
                       </div>
                     </section>
@@ -1296,18 +1406,12 @@ export default function BrainstormPage() {
                 <input
                   ref={knowledgeInputRef}
                   className="flex-1 bg-[var(--jh-bg-2)] border border-[var(--jh-line)] rounded-lg px-3 py-2 text-sm text-[var(--jh-text)] placeholder:text-[var(--jh-muted)] focus:outline-none focus:border-[var(--jh-accent)]"
-                  placeholder="追问更多..."
+                  placeholder={knowledgeMessages.length === 0 ? '输入自定义问题，留空则解释选中文本' : '追问更多...'}
                   onKeyDown={(e) => {
                     if (e.key === 'Enter' && (e.target as HTMLInputElement).value.trim()) {
                       const val = (e.target as HTMLInputElement).value.trim();
                       (e.target as HTMLInputElement).value = '';
-                      if (knowledgeMessages.length === 0) {
-                        setSelectedKnowledgeText(val);
-                        knowledgeAnchorRef.current = val;
-                        void handleKnowledgeAsk(val);
-                      } else {
-                        void handleKnowledgeContinue(val);
-                      }
+                      void handleKnowledgeContinue(val);
                     }
                   }}
                 />
@@ -1320,13 +1424,7 @@ export default function BrainstormPage() {
                       return;
                     }
                     knowledgeInputRef.current!.value = '';
-                    if (knowledgeMessages.length === 0) {
-                      setSelectedKnowledgeText(val);
-                      knowledgeAnchorRef.current = val;
-                      void handleKnowledgeAsk(val);
-                    } else {
-                      void handleKnowledgeContinue(val);
-                    }
+                    void handleKnowledgeContinue(val);
                   }}
                   disabled={isKnowledgeLoading}
                   className="bg-[var(--jh-accent)] text-[var(--jh-bg)]"

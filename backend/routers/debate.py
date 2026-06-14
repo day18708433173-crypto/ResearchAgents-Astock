@@ -14,7 +14,12 @@ from fastapi.responses import StreamingResponse
 
 from services.db_init import get_db
 from services.llm_client import chat, astream_chat
-from modules.debate.orchestrator import run_debate as _run_debate, stream_debate as _stream_debate
+from modules.debate.orchestrator import (
+    run_debate as _run_debate,
+    stream_debate as _stream_debate,
+    stream_single_round as _stream_single_round,
+    stream_judge_verdict as _stream_judge_verdict,
+)
 from modules.debate.agents import build_knowledge_prompt
 
 from backend.schemas import (
@@ -251,8 +256,11 @@ async def debate_stream(
     llm_config = _llm_config_from_request(request)
 
     async def event_generator():
+        import threading
+
         queue: asyncio.Queue = asyncio.Queue()
         loop = asyncio.get_running_loop()
+        cancel_event = threading.Event()
 
         def producer():
             try:
@@ -261,23 +269,36 @@ async def debate_stream(
                     ticker_name,
                     focus_question=focus_question,
                     llm_config=llm_config,
+                    cancel_event=cancel_event,
                 ):
+                    if cancel_event.is_set():
+                        break
                     loop.call_soon_threadsafe(queue.put_nowait, event)
             except Exception as e:
-                loop.call_soon_threadsafe(
-                    queue.put_nowait, {"type": "error", "message": str(e)}
-                )
+                if not cancel_event.is_set():
+                    loop.call_soon_threadsafe(
+                        queue.put_nowait, {"type": "error", "message": str(e)}
+                    )
             finally:
                 loop.call_soon_threadsafe(queue.put_nowait, None)
 
-        import threading
         threading.Thread(target=producer, daemon=True).start()
 
-        while True:
-            event = await queue.get()
-            if event is None:
-                break
-            yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+        try:
+            while True:
+                if await request.is_disconnected():
+                    cancel_event.set()
+                    logger.info("辩论 SSE 客户端已断开，正在取消后续 LLM 调用")
+                    break
+                try:
+                    event = await asyncio.wait_for(queue.get(), timeout=0.5)
+                except asyncio.TimeoutError:
+                    continue
+                if event is None:
+                    break
+                yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+        finally:
+            cancel_event.set()
 
     return StreamingResponse(
         event_generator(),
@@ -287,6 +308,147 @@ async def debate_stream(
             "Connection": "keep-alive",
             "X-Accel-Buffering": "no",
         },
+    )
+
+
+@router.get("/api/debate/round")
+async def debate_round(
+    request: Request,
+    ticker: str = Query(..., description="股票代码"),
+    ticker_name: str = Query(default="", description="股票名称"),
+    round_num: int = Query(default=1, ge=1, le=10, description="本轮编号（从1开始）"),
+    debate_id: int = Query(default=None, description="已有辩论ID（第1轮不传）"),
+    focus_question: str = Query(default="", description="本轮聚焦问题（可选）"),
+    supplement_data: str = Query(default="", description="用户补充数据，JSON字符串，如 {\"PE\": \"15\"}"),
+):
+    """SSE 流式单轮辩论（轮间暂停模式）。
+
+    第1轮不传 debate_id，会自动生成数据卡并创建辩论记录。
+    后续轮传入 debate_id，从数据库加载已有数据卡和上轮发言。
+    """
+    llm_config = _llm_config_from_request(request)
+
+    parsed_supplement: dict | None = None
+    if supplement_data.strip():
+        try:
+            parsed_supplement = json.loads(supplement_data)
+        except Exception:
+            raise HTTPException(status_code=400, detail="supplement_data 必须是合法的 JSON 对象")
+
+    async def event_generator():
+        import threading
+
+        queue: asyncio.Queue = asyncio.Queue()
+        loop = asyncio.get_running_loop()
+        cancel_event = threading.Event()
+
+        def producer():
+            try:
+                for event in _stream_single_round(
+                    ticker=ticker,
+                    ticker_name=ticker_name,
+                    round_num=round_num,
+                    debate_id=debate_id,
+                    focus_question=focus_question,
+                    supplement_data=parsed_supplement,
+                    llm_config=llm_config,
+                    cancel_event=cancel_event,
+                ):
+                    if cancel_event.is_set():
+                        break
+                    loop.call_soon_threadsafe(queue.put_nowait, event)
+            except Exception as e:
+                if not cancel_event.is_set():
+                    loop.call_soon_threadsafe(
+                        queue.put_nowait, {"type": "error", "message": str(e)}
+                    )
+            finally:
+                loop.call_soon_threadsafe(queue.put_nowait, None)
+
+        threading.Thread(target=producer, daemon=True).start()
+
+        try:
+            while True:
+                if await request.is_disconnected():
+                    cancel_event.set()
+                    break
+                try:
+                    event = await asyncio.wait_for(queue.get(), timeout=0.5)
+                except asyncio.TimeoutError:
+                    continue
+                if event is None:
+                    break
+                yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+        finally:
+            cancel_event.set()
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"},
+    )
+
+
+@router.get("/api/debate/judge")
+async def debate_judge(
+    request: Request,
+    ticker: str = Query(..., description="股票代码"),
+    ticker_name: str = Query(default="", description="股票名称"),
+    debate_id: int = Query(..., description="辩论ID"),
+    focus_question: str = Query(default="", description="裁判聚焦问题（可选）"),
+):
+    """SSE 流式裁判裁决（从 DB 加载所有轮次，生成综合裁决）。"""
+    llm_config = _llm_config_from_request(request)
+
+    async def event_generator():
+        import threading
+
+        queue: asyncio.Queue = asyncio.Queue()
+        loop = asyncio.get_running_loop()
+        cancel_event = threading.Event()
+
+        def producer():
+            try:
+                for event in _stream_judge_verdict(
+                    ticker=ticker,
+                    ticker_name=ticker_name,
+                    debate_id=debate_id,
+                    focus_question=focus_question,
+                    llm_config=llm_config,
+                    cancel_event=cancel_event,
+                ):
+                    if cancel_event.is_set():
+                        break
+                    loop.call_soon_threadsafe(queue.put_nowait, event)
+            except Exception as e:
+                if not cancel_event.is_set():
+                    loop.call_soon_threadsafe(
+                        queue.put_nowait, {"type": "error", "message": str(e)}
+                    )
+            finally:
+                loop.call_soon_threadsafe(queue.put_nowait, None)
+
+        threading.Thread(target=producer, daemon=True).start()
+
+        try:
+            while True:
+                if await request.is_disconnected():
+                    cancel_event.set()
+                    break
+                try:
+                    event = await asyncio.wait_for(queue.get(), timeout=0.5)
+                except asyncio.TimeoutError:
+                    continue
+                if event is None:
+                    break
+                yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+        finally:
+            cancel_event.set()
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"},
     )
 
 
@@ -380,13 +542,6 @@ async def debate_knowledge(request: KnowledgeRequest, http_request: Request):
         context_type, context_detail = _parse_knowledge_context(request.context)
         history = [m.dict() if hasattr(m, "dict") else m for m in request.history]
 
-        rag_reference = ""
-        try:
-            from services.rag.context_builder import retrieve_concept_explanation
-            rag_reference = retrieve_concept_explanation(request.selected_text)
-        except Exception as e:
-            logger.warning(f"金融科普 RAG 检索失败: {e}")
-
         user_question = request.question.strip()
         if not user_question:
             user_question = f"请解释「{request.selected_text}」的含义和投资意义。"
@@ -399,12 +554,12 @@ async def debate_knowledge(request: KnowledgeRequest, http_request: Request):
             ticker_name=request.ticker_name,
             question=user_question,
             history=history,
-            rag_reference=rag_reference,
         )
 
         reply = chat(
-            prompt=user_prompt,
+            user_prompt,
             system=system_prompt,
+            scenario="knowledge",
             llm_config=llm_config,
         )
         explanation, related_terms = _parse_knowledge_reply(reply)

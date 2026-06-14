@@ -9,7 +9,7 @@ import {
   TrendingUp, TrendingDown, Scale,
   Loader2, MessageSquare, AlertCircle
 } from 'lucide-react';
-import type { Round, JudgeVerdict } from './useDebateStream';
+import type { Round, JudgeVerdict, DebatePhase } from './useDebateStream';
 
 function formatMissingInfo(missingInfo: unknown): string {
   if (missingInfo == null) return '';
@@ -34,6 +34,7 @@ interface DebatePanelProps {
   streamingRound: number | null;
   onOpenCoach: () => void;
   coachActive?: boolean;
+  phase?: DebatePhase;
 }
 
 export default function DebatePanel({
@@ -44,13 +45,14 @@ export default function DebatePanel({
   streamingRound,
   onOpenCoach,
   coachActive = false,
+  phase,
 }: DebatePanelProps) {
   if (rounds.length === 0) return null;
 
   return (
     <div id="debate-content-area" className="mb-6">
-      {/* 策略审查入口（教练未自动展开时显示） */}
-      {judgeVerdict && !coachActive && (
+      {/* 策略审查入口仅在 done 阶段且教练未展开时显示 */}
+      {judgeVerdict && phase === 'done' && !coachActive && (
         <div className="flex justify-end mb-4">
           <Button
             onClick={onOpenCoach}

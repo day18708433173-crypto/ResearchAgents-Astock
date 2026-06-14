@@ -18,6 +18,8 @@ from pathlib import Path
 # ── 日志配置 ──
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
 
 # ── 环境配置 ──
 ROOT = Path(__file__).parent.parent
