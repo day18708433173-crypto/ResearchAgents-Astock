@@ -59,6 +59,29 @@ def _build_messages(prompt: str, system: str = "") -> list[dict]:
     return messages
 
 
+def _select_model(cfg: dict, scenario: Scenario = "default", use_reasoning: bool = False) -> str:
+    """裁判等强推理场景优先使用 reasoning_model。"""
+    if use_reasoning or scenario == "judge":
+        reasoning = (cfg.get("reasoning_model") or "").strip()
+        if reasoning:
+            return reasoning
+    model = (cfg.get("model") or "").strip()
+    if not model:
+        raise ValueError("LLM model 未配置")
+    return model
+
+
+def _message_text(message) -> str:
+    """提取 assistant 文本；兼容 reasoning 模型把正文放在 reasoning_content 的情况。"""
+    content = (getattr(message, "content", None) or "").strip()
+    if content:
+        return content
+    reasoning = getattr(message, "reasoning_content", None)
+    if reasoning and str(reasoning).strip():
+        return str(reasoning).strip()
+    return ""
+
+
 def _resolve_config(llm_config: Mapping[str, str] | None = None) -> dict:
     """Merge request-scoped LLM config over the default YAML config."""
     cfg = dict(get_llm_config())
@@ -67,6 +90,9 @@ def _resolve_config(llm_config: Mapping[str, str] | None = None) -> dict:
             value = (llm_config.get(key) or "").strip()
             if value:
                 cfg[key] = value
+        # 用户只配置了 model 时，裁判与辩论共用同一模型，避免误用 YAML 默认 reasoning_model
+        if (llm_config.get("model") or "").strip() and not (llm_config.get("reasoning_model") or "").strip():
+            cfg["reasoning_model"] = cfg["model"]
     return cfg
 
 
@@ -108,16 +134,18 @@ def chat(
     """单轮对话，返回文本内容。use_reasoning=True时使用强推理模型。"""
     cfg = _resolve_config(llm_config)
     client = create_client(llm_config)
-    model = cfg.get("reasoning_model") if use_reasoning else cfg["model"]
-    if not model:
-        model = cfg["model"]
+    model = _select_model(cfg, scenario, use_reasoning)
     resp = client.chat.completions.create(
         model=model,
         messages=_build_messages(prompt, system),
         max_tokens=_get_max_tokens(scenario),
         temperature=cfg.get("temperature", 0.7),
     )
-    return resp.choices[0].message.content
+    text = _message_text(resp.choices[0].message)
+    if not text:
+        finish = getattr(resp.choices[0], "finish_reason", None)
+        raise ValueError(f"LLM 返回空内容 (finish_reason={finish!r}, model={model})")
+    return text
 
 
 def chat_with_search(
@@ -148,9 +176,7 @@ def stream_chat(
     """流式对话，返回生成器。use_reasoning=True时使用强推理模型。"""
     cfg = _resolve_config(llm_config)
     client = create_client(llm_config)
-    model = cfg.get("reasoning_model") if use_reasoning else cfg["model"]
-    if not model:
-        model = cfg["model"]
+    model = _select_model(cfg, scenario, use_reasoning)
     stream = client.chat.completions.create(
         model=model,
         messages=_build_messages(prompt, system),
@@ -159,8 +185,12 @@ def stream_chat(
         stream=True,
     )
     for chunk in stream:
-        if chunk.choices[0].delta.content:
-            yield chunk.choices[0].delta.content
+        delta = chunk.choices[0].delta
+        if delta.content:
+            yield delta.content
+        reasoning = getattr(delta, "reasoning_content", None)
+        if reasoning:
+            yield reasoning
 
 
 async def astream_chat(
@@ -173,9 +203,7 @@ async def astream_chat(
     """异步流式对话，供 FastAPI SSE 使用。"""
     cfg = _resolve_config(llm_config)
     client = create_async_client(llm_config)
-    model = cfg.get("reasoning_model") if use_reasoning else cfg["model"]
-    if not model:
-        model = cfg["model"]
+    model = _select_model(cfg, scenario, use_reasoning)
     stream = await client.chat.completions.create(
         model=model,
         messages=_build_messages(prompt, system),
@@ -184,5 +212,9 @@ async def astream_chat(
         stream=True,
     )
     async for chunk in stream:
-        if chunk.choices[0].delta.content:
-            yield chunk.choices[0].delta.content
+        delta = chunk.choices[0].delta
+        if delta.content:
+            yield delta.content
+        reasoning = getattr(delta, "reasoning_content", None)
+        if reasoning:
+            yield reasoning

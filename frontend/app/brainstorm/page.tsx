@@ -1075,6 +1075,7 @@ export default function BrainstormPage() {
                 isStreaming={isStreaming}
                 streamingSide={streamingSide}
                 streamingRound={streamingRound}
+                statusMessage={statusMessage}
                 onOpenCoach={() => {
                   setShowCoachPanel(true);
                   if (coachMessages.length === 0 && judgeVerdict) void initCoachAfterDebate(judgeVerdict);

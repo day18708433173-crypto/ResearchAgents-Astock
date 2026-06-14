@@ -383,6 +383,45 @@ def build_judge_prompt(ticker: str, name: str, rounds: list,
     return system, user
 
 
+def parse_judge_llm_output(raw: str | None) -> dict:
+    """解析裁判 LLM 输出为裁决 dict；无效或空输出时抛出 ValueError。"""
+    import json
+    import re
+
+    text = (raw or "").strip()
+    if not text:
+        raise ValueError("裁判 LLM 返回为空，请检查 API Key / 模型配置或稍后重试")
+
+    fence = re.search(r"```(?:json)?\s*([\s\S]*?)```", text, re.IGNORECASE)
+    if fence:
+        text = fence.group(1).strip()
+
+    match = re.search(r"\{[\s\S]*\}", text)
+    if not match:
+        raise ValueError(f"裁判输出不是合法 JSON：{text[:200]}")
+
+    try:
+        verdict = json.loads(match.group())
+    except json.JSONDecodeError as e:
+        raise ValueError(f"裁判 JSON 解析失败: {e}") from e
+
+    if not isinstance(verdict, dict):
+        raise ValueError("裁判输出格式错误")
+
+    rating = (verdict.get("rating") or "").strip()
+    summary = (verdict.get("summary") or "").strip()
+    if not summary:
+        summary = (verdict.get("action_hint") or "").strip()
+        if summary:
+            verdict["summary"] = summary
+    if not rating and not summary:
+        raise ValueError("裁判 JSON 缺少 rating 与 summary")
+    if not summary:
+        raise ValueError("裁判 JSON 缺少 summary 综合研判")
+
+    return verdict
+
+
 def _format_data_card(card: dict) -> str:
     """格式化数据卡为文本"""
     from modules.debate.data_card import format_field_line

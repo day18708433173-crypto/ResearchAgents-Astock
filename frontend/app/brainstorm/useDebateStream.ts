@@ -1,7 +1,9 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
+import { flushSync } from 'react-dom';
 import { buildUserLlmHeaders } from '@/lib/llmConfig';
+import { buildDebateSseUrl } from '@/lib/debateStreamUrl';
 
 // 类型定义
 export interface Stock {
@@ -167,7 +169,7 @@ export function useDebateStream({ onDebateStart, onRoundComplete, onComplete, to
     });
 
     try {
-      await _consumeStream(`/api/debate/round?${params}`, (ev) => {
+      await _consumeStream(buildDebateSseUrl(`/api/debate/round?${params}`), (ev) => {
         _handleRoundEvent(ev);
       });
     } catch (err) {
@@ -208,7 +210,7 @@ export function useDebateStream({ onDebateStart, onRoundComplete, onComplete, to
     });
 
     try {
-      await _consumeStream(`/api/debate/round?${params}`, (ev) => {
+      await _consumeStream(buildDebateSseUrl(`/api/debate/round?${params}`), (ev) => {
         _handleRoundEvent(ev);
       });
     } catch (err) {
@@ -244,16 +246,24 @@ export function useDebateStream({ onDebateStart, onRoundComplete, onComplete, to
       focus_question: focusQuestion,
     });
 
+    let gotComplete = false;
+
     try {
-      await _consumeStream(`/api/debate/judge?${params}`, (ev) => {
+      await _consumeStream(buildDebateSseUrl(`/api/debate/judge?${params}`), (ev) => {
         switch (ev.type) {
           case 'status':
             setStatusMessage(ev.message || '');
             break;
-          case 'judge':
-            setJudgeVerdict((ev.data as JudgeVerdict) || null);
+          case 'judge': {
+            const verdict = (ev.data as JudgeVerdict) || null;
+            setJudgeVerdict(verdict);
+            if (verdict && !(verdict.summary || '').trim()) {
+              toast('裁决内容不完整，请检查 LLM 配置后重试', 'error');
+            }
             break;
+          }
           case 'complete':
+            gotComplete = true;
             setPhase('done');
             setStatusMessage('研究纪要已完成');
             onComplete?.();
@@ -265,6 +275,11 @@ export function useDebateStream({ onDebateStart, onRoundComplete, onComplete, to
             break;
         }
       });
+      if (!gotComplete && abortRef.current?.signal.aborted !== true) {
+        setPhase((prev) => (prev === 'judging' ? 'paused' : prev));
+        setStatusMessage('裁判连接已结束但未收到完整结果，请重试');
+        toast('裁判未完成，请重试', 'error');
+      }
     } catch (err) {
       if (err instanceof Error && err.name === 'AbortError') {
         setStatusMessage('已停止');
@@ -282,6 +297,39 @@ export function useDebateStream({ onDebateStart, onRoundComplete, onComplete, to
   };
 
   // ─── 处理轮次 SSE 事件 ─────────────────────────────────
+  const _applyTokenUpdate = (
+    side: 'bull' | 'bear',
+    roundNum: number,
+    delta: string,
+  ) => {
+    flushSync(() => {
+      setStreamingSide(side);
+      setStreamingRound(roundNum);
+      setRounds(prev => {
+        const existing = prev.find(r => r.round === roundNum);
+        if (existing) {
+          return prev.map(r =>
+            r.round === roundNum
+              ? {
+                  ...r,
+                  [side === 'bull' ? 'bull_content' : 'bear_content']:
+                    (side === 'bull' ? r.bull_content : r.bear_content || '') + delta,
+                }
+              : r
+          );
+        }
+        return [
+          ...prev,
+          {
+            round: roundNum,
+            bull_content: side === 'bull' ? delta : '',
+            bear_content: side === 'bear' ? delta : '',
+          },
+        ];
+      });
+    });
+  };
+
   const _handleRoundEvent = (data: SSEEvent) => {
     switch (data.type) {
       case 'status':
@@ -306,37 +354,11 @@ export function useDebateStream({ onDebateStart, onRoundComplete, onComplete, to
         break;
 
       case 'bull_token':
-        setStreamingSide('bull');
-        setStreamingRound(data.round ?? null);
-        setRounds(prev => {
-          const roundNum = data.round || 1;
-          const existing = prev.find(r => r.round === roundNum);
-          if (existing) {
-            return prev.map(r =>
-              r.round === roundNum
-                ? { ...r, bull_content: (r.bull_content || '') + (data.delta || '') }
-                : r
-            );
-          }
-          return [...prev, { round: roundNum, bull_content: data.delta || '', bear_content: '' }];
-        });
+        _applyTokenUpdate('bull', data.round || 1, data.delta || '');
         break;
 
       case 'bear_token':
-        setStreamingSide('bear');
-        setStreamingRound(data.round ?? null);
-        setRounds(prev => {
-          const roundNum = data.round || 1;
-          const existing = prev.find(r => r.round === roundNum);
-          if (existing) {
-            return prev.map(r =>
-              r.round === roundNum
-                ? { ...r, bear_content: (r.bear_content || '') + (data.delta || '') }
-                : r
-            );
-          }
-          return [...prev, { round: roundNum, bull_content: '', bear_content: data.delta || '' }];
-        });
+        _applyTokenUpdate('bear', data.round || 1, data.delta || '');
         break;
 
       case 'bull_speak':

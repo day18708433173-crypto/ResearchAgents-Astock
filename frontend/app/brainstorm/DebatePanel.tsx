@@ -1,5 +1,6 @@
 'use client';
 
+import { useEffect, useRef } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -26,12 +27,51 @@ function formatConfidence(confidence?: number): string {
   return `${Math.round(pct)}%`;
 }
 
+function DebateSideContent({
+  content,
+  isLive,
+  side,
+}: {
+  content: string;
+  isLive: boolean;
+  side: 'bull' | 'bear';
+}) {
+  const cursorClass = side === 'bull' ? 'bg-[var(--jh-accent)]' : 'bg-[var(--jh-danger)]';
+
+  if (!content && isLive) {
+    return (
+      <span className="text-[var(--jh-muted)] inline-flex items-center gap-2">
+        思考中...
+        <span className={`inline-block w-1.5 h-4 ${cursorClass} animate-pulse`} />
+      </span>
+    );
+  }
+
+  if (!content) return null;
+
+  if (isLive) {
+    return (
+      <p className="whitespace-pre-wrap break-words leading-relaxed">
+        {content}
+        <span className={`inline-block w-1.5 h-4 ${cursorClass} animate-pulse ml-0.5 align-middle`} />
+      </p>
+    );
+  }
+
+  return (
+    <div className="debate-content">
+      <ReactMarkdown remarkPlugins={[remarkGfm]}>{content}</ReactMarkdown>
+    </div>
+  );
+}
+
 interface DebatePanelProps {
   rounds: Round[];
   judgeVerdict: JudgeVerdict | null;
   isStreaming: boolean;
   streamingSide: 'bull' | 'bear' | null;
   streamingRound: number | null;
+  statusMessage?: string;
   onOpenCoach: () => void;
   coachActive?: boolean;
   phase?: DebatePhase;
@@ -43,15 +83,28 @@ export default function DebatePanel({
   isStreaming,
   streamingSide,
   streamingRound,
+  statusMessage = '',
   onOpenCoach,
   coachActive = false,
   phase,
 }: DebatePanelProps) {
-  if (rounds.length === 0) return null;
+  const bullScrollRef = useRef<HTMLDivElement>(null);
+  const bearScrollRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!isStreaming || !streamingSide) return;
+    const el = streamingSide === 'bull' ? bullScrollRef.current : bearScrollRef.current;
+    if (el) {
+      el.scrollTop = el.scrollHeight;
+    }
+  }, [rounds, isStreaming, streamingSide, streamingRound]);
+
+  if (rounds.length === 0 && !isStreaming) return null;
+
+  const placeholderRound = rounds.length === 0 && isStreaming;
 
   return (
     <div id="debate-content-area" className="mb-6">
-      {/* 策略审查入口仅在 done 阶段且教练未展开时显示 */}
       {judgeVerdict && phase === 'done' && !coachActive && (
         <div className="flex justify-end mb-4">
           <Button
@@ -64,9 +117,8 @@ export default function DebatePanel({
         </div>
       )}
 
-      {/* 三栏布局：多头-裁决-空头 */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-        {/* 左侧：多头纪要 */}
+        {/* 多头 */}
         <Card data-knowledge-source="bull" className="bg-[var(--jh-surface)] border-[var(--jh-line)] border-l-4 border-l-[var(--jh-accent)] rounded-lg overflow-hidden shadow-none">
           <CardHeader className="pb-2">
             <CardTitle className="text-base flex items-center gap-2 text-[var(--jh-text)]">
@@ -75,31 +127,38 @@ export default function DebatePanel({
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <ScrollArea className="h-[350px]">
-              {rounds.map((round) => (
-                <div key={round.round} className="mb-4 last:mb-0">
-                  {(round.bull_content || (isStreaming && streamingSide === 'bull' && streamingRound === round.round)) && (
-                    <div className="p-3 bg-[var(--jh-bg-2)] rounded-md border border-[var(--jh-line)] mb-2">
-                      <div className="text-xs text-[var(--jh-muted)] mb-1">第 {round.round} 轮</div>
-                      <div className="text-sm text-[var(--jh-text)] debate-content">
-                        {round.bull_content ? (
-                          <ReactMarkdown remarkPlugins={[remarkGfm]}>{round.bull_content}</ReactMarkdown>
-                        ) : (
-                          <span className="text-[var(--jh-muted)]">思考中...</span>
-                        )}
-                        {isStreaming && streamingSide === 'bull' && streamingRound === round.round && (
-                          <span className="inline-block w-1.5 h-4 bg-[var(--jh-accent)] animate-pulse ml-0.5 align-middle" />
-                        )}
+            <div ref={bullScrollRef} className="h-[350px] overflow-y-auto pr-3">
+                {placeholderRound ? (
+                  <div className="p-3 text-sm text-[var(--jh-muted)] flex items-center gap-2">
+                    <Loader2 className="w-4 h-4 animate-spin shrink-0" />
+                    {statusMessage || '正在准备辩论...'}
+                  </div>
+                ) : (
+                  rounds.map((round) => {
+                    const isLiveBull = isStreaming && streamingSide === 'bull' && streamingRound === round.round;
+                    const showBull = round.bull_content || isLiveBull;
+                    if (!showBull) return null;
+                    return (
+                      <div key={round.round} className="mb-4 last:mb-0">
+                        <div className="p-3 bg-[var(--jh-bg-2)] rounded-md border border-[var(--jh-line)] mb-2">
+                          <div className="text-xs text-[var(--jh-muted)] mb-1">第 {round.round} 轮</div>
+                          <div className="text-sm text-[var(--jh-text)]">
+                            <DebateSideContent
+                              content={round.bull_content}
+                              isLive={isLiveBull}
+                              side="bull"
+                            />
+                          </div>
+                        </div>
                       </div>
-                    </div>
-                  )}
-                </div>
-              ))}
-            </ScrollArea>
+                    );
+                  })
+                )}
+            </div>
           </CardContent>
         </Card>
 
-        {/* 中间：裁判裁决 */}
+        {/* 裁判 */}
         <Card
           data-knowledge-source="judge"
           className="bg-[var(--jh-surface)] border border-[var(--jh-line)] rounded-lg overflow-hidden shadow-none"
@@ -114,7 +173,6 @@ export default function DebatePanel({
             {judgeVerdict ? (
               <ScrollArea className="h-[400px] pr-3">
                 <div className="space-y-4">
-                  {/* 主结论：评级 + 置信度 + 质量×估值 */}
                   <div className="rounded-md border border-[var(--jh-line)] bg-[var(--jh-bg-2)] p-4">
                     <div className="flex items-start justify-between gap-4">
                       <div>
@@ -146,7 +204,6 @@ export default function DebatePanel({
                     )}
                   </div>
 
-                  {/* 综合研判 */}
                   {judgeVerdict.summary && (
                     <div>
                       <div className="flex items-center gap-2 mb-2.5">
@@ -159,7 +216,6 @@ export default function DebatePanel({
                     </div>
                   )}
 
-                  {/* 下一步建议 */}
                   {judgeVerdict.action_hint && (
                     <div className="rounded-md border border-[var(--jh-border-accent)] bg-[rgba(143,212,195,0.06)] p-3.5">
                       <div className="text-xs font-semibold text-[var(--jh-accent)] mb-1.5">下一步建议</div>
@@ -167,7 +223,6 @@ export default function DebatePanel({
                     </div>
                   )}
 
-                  {/* 信息缺口（直接展示） */}
                   {formatMissingInfo(judgeVerdict.missing_info) && (
                     <div className="rounded-md border border-[rgba(134,167,213,0.28)] bg-[rgba(134,167,213,0.06)] p-3.5">
                       <div className="flex items-center gap-1.5 text-xs font-semibold text-[var(--jh-info)] mb-1.5">
@@ -183,10 +238,10 @@ export default function DebatePanel({
               </ScrollArea>
             ) : (
               <div className="h-[400px] flex items-center justify-center text-[var(--jh-muted)]">
-                {isStreaming ? (
+                {phase === 'judging' || isStreaming ? (
                   <div className="flex items-center gap-2">
                     <Loader2 className="w-4 h-4 animate-spin" />
-                    裁决摘要生成中...
+                    {phase === 'judging' ? '裁决摘要生成中...' : '等待裁决...'}
                   </div>
                 ) : (
                   '裁决摘要尚未生成'
@@ -196,7 +251,7 @@ export default function DebatePanel({
           </CardContent>
         </Card>
 
-        {/* 右侧：空头纪要 */}
+        {/* 空头 */}
         <Card data-knowledge-source="bear" className="bg-[var(--jh-surface)] border-[var(--jh-line)] border-l-4 border-l-[var(--jh-danger)] rounded-lg overflow-hidden shadow-none">
           <CardHeader className="pb-2">
             <CardTitle className="text-base flex items-center gap-2 text-[var(--jh-text)]">
@@ -205,27 +260,34 @@ export default function DebatePanel({
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <ScrollArea className="h-[350px]">
-              {rounds.map((round) => (
-                <div key={round.round} className="mb-4 last:mb-0">
-                  {(round.bear_content || (isStreaming && streamingSide === 'bear' && streamingRound === round.round)) && (
-                    <div className="p-3 bg-[var(--jh-bg-2)] rounded-md border border-[var(--jh-line)] mb-2">
-                      <div className="text-xs text-[var(--jh-muted)] mb-1">第 {round.round} 轮</div>
-                      <div className="text-sm text-[var(--jh-text)] debate-content">
-                        {round.bear_content ? (
-                          <ReactMarkdown remarkPlugins={[remarkGfm]}>{round.bear_content}</ReactMarkdown>
-                        ) : (
-                          <span className="text-[var(--jh-muted)]">思考中...</span>
-                        )}
-                        {isStreaming && streamingSide === 'bear' && streamingRound === round.round && (
-                          <span className="inline-block w-1.5 h-4 bg-[var(--jh-danger)] animate-pulse ml-0.5 align-middle" />
-                        )}
+            <div ref={bearScrollRef} className="h-[350px] overflow-y-auto pr-3">
+                {placeholderRound ? (
+                  <div className="p-3 text-sm text-[var(--jh-muted)] flex items-center gap-2">
+                    <Loader2 className="w-4 h-4 animate-spin shrink-0" />
+                    {statusMessage || '正在准备辩论...'}
+                  </div>
+                ) : (
+                  rounds.map((round) => {
+                    const isLiveBear = isStreaming && streamingSide === 'bear' && streamingRound === round.round;
+                    const showBear = round.bear_content || isLiveBear;
+                    if (!showBear) return null;
+                    return (
+                      <div key={round.round} className="mb-4 last:mb-0">
+                        <div className="p-3 bg-[var(--jh-bg-2)] rounded-md border border-[var(--jh-line)] mb-2">
+                          <div className="text-xs text-[var(--jh-muted)] mb-1">第 {round.round} 轮</div>
+                          <div className="text-sm text-[var(--jh-text)]">
+                            <DebateSideContent
+                              content={round.bear_content}
+                              isLive={isLiveBear}
+                              side="bear"
+                            />
+                          </div>
+                        </div>
                       </div>
-                    </div>
-                  )}
-                </div>
-              ))}
-            </ScrollArea>
+                    );
+                  })
+                )}
+            </div>
           </CardContent>
         </Card>
       </div>

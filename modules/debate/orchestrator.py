@@ -19,7 +19,7 @@ from typing import Generator, Mapping, Optional
 from services.llm_client import chat, stream_chat
 from modules.debate.data_card import generate as gen_data_card
 from modules.debate.agents import (
-    build_debate_prompt, build_judge_prompt,
+    build_debate_prompt, build_judge_prompt, parse_judge_llm_output,
 )
 from modules.debate.source_tagger import tag_output
 from modules.debate.fact_check import verify
@@ -171,26 +171,14 @@ def run_debate(ticker: str, ticker_name: str = "",
         judge_raw = chat(judge_usr, system=judge_sys, scenario="judge", llm_config=llm_config)
         result["total_llm_calls"] += 1
         result["estimated_cost"] += cost_per_call
-
-        judge_json_match = re.search(r'\{[\s\S]*\}', judge_raw)
-        if judge_json_match:
-            judge_verdict = json.loads(judge_json_match.group())
-        else:
-            judge_verdict = {
-                "rating": "持有",
-                "confidence": 0.5,
-                "summary": judge_raw[:500],
-                "bull_strengths": [],
-                "bear_strengths": [],
-                "key_risk": "",
-                "key_opportunity": "",
-            }
+        judge_verdict = parse_judge_llm_output(judge_raw)
         result["judge_verdict"] = judge_verdict
-    except Exception:
+    except Exception as e:
+        logger.exception("裁判裁决失败")
         result["judge_verdict"] = {
             "rating": "持有",
             "confidence": 0.0,
-            "summary": "裁判 LLM 调用失败",
+            "summary": f"裁判 LLM 调用失败: {e}",
             "bull_strengths": [],
             "bear_strengths": [],
             "bull_weaknesses": [],
@@ -357,16 +345,13 @@ def stream_debate(
         judge_raw = chat(judge_usr, system=judge_sys, scenario="judge", llm_config=llm_config)
         result["total_llm_calls"] += 1
         result["estimated_cost"] += cost_per_call
-
-        judge_json_match = re.search(r'\{[\s\S]*\}', judge_raw)
-        if judge_json_match:
-            judge_verdict = json.loads(judge_json_match.group())
-        else:
-            judge_verdict = {"rating": "持有", "confidence": 0.5, "summary": judge_raw[:500]}
+        judge_verdict = parse_judge_llm_output(judge_raw)
         result["judge_verdict"] = judge_verdict
         yield {"type": "judge", "data": judge_verdict}
     except Exception as e:
-        yield {"type": "judge", "data": {"rating": "持有", "summary": f"裁决失败: {e}"}}
+        logger.exception("流式辩论裁判失败")
+        yield {"type": "error", "message": f"裁判失败: {e}"}
+        return
 
     # 存档
     debate_id = _save_debate_log(result)
@@ -536,26 +521,24 @@ def stream_judge_verdict(
 
     yield {"type": "status", "message": "裁判正在综合评判..."}
     try:
+        fact_result = verify(rounds, card)
         judge_sys, judge_usr = build_judge_prompt(
             ticker=ticker,
             name=ticker_name,
             rounds=rounds,
+            fact_check=fact_result,
             rag_context=rag_context,
             data_card=card,
             focus_question=focus_question,
         )
         judge_raw = chat(judge_usr, system=judge_sys, scenario="judge", llm_config=llm_config)
-
-        judge_json_match = re.search(r'\{[\s\S]*\}', judge_raw)
-        if judge_json_match:
-            judge_verdict = json.loads(judge_json_match.group())
-        else:
-            judge_verdict = {"rating": "持有", "confidence": 0.5, "summary": judge_raw[:500]}
+        judge_verdict = parse_judge_llm_output(judge_raw)
 
         _update_judge_verdict(debate_id, judge_verdict)
         yield {"type": "judge", "data": judge_verdict}
         yield {"type": "complete", "data": {"debate_id": debate_id}}
     except Exception as e:
+        logger.exception("分轮裁判失败 debate_id=%s", debate_id)
         yield {"type": "error", "message": f"裁判失败: {e}"}
 
 
