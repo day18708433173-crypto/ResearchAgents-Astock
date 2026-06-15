@@ -134,6 +134,7 @@ def enrich_data_card(ticker: str, data_card: dict) -> dict:
             result["recent_announcements"].append({
                 "title": meta.get("title", ""),
                 "date": meta.get("date", ""),
+                "type": meta.get("type", ""),
                 "url": meta.get("url", ""),
                 "summary": c.get("content", "")[:200],
             })
@@ -181,24 +182,24 @@ def build_enriched_prompt_section(enriched_context: dict) -> str:
     # Recent announcements
     announcements = enriched_context.get("recent_announcements", [])
     if announcements:
-        lines = ["### 近期重要公告"]
-        for a in announcements[:5]:
+        lines = ["### 近期重要公告（事件背景，用于支撑多空逻辑）"]
+        for a in announcements[:8]:
             title = a.get("title", "")
             date = a.get("date", "")
+            atype = a.get("type", "")
             if title:
-                lines.append(f"- [{date}] {title}")
+                tag = f"（{atype}）" if atype and atype != "nan" else ""
+                lines.append(f"- [{date}] {title}{tag}")
         sections.append("\n".join(lines))
 
     if not sections:
         return ""
 
     header = (
-        "## 补充知识（由系统从公开信息检索，供参考）\n\n"
-        "以下信息来自系统RAG知识库，可以帮助你在辩论中提供更丰富的上下文。"
-        "但请注意：\n"
-        "- 所有**数值型声明**仍必须以[数据卡]为准\n"
-        "- 行业对标数据可用于比较分析\n"
-        "- 公告信息可用于背景补充，但不能替代数据卡中的财务数据\n"
+        "## 补充知识（系统检索的公开信息，仅供参考）\n\n"
+        "以下是与本股相关的行业对标、公司业务与近期公告等背景资料。"
+        "可结合本次辩论的聚焦问题，适量引用与论点相关的内容，不必逐条展开；"
+        "具体财务数值仍以[数据卡]为准。\n"
     )
 
     return header + "\n\n" + "\n\n".join(sections)

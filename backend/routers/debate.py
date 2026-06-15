@@ -9,11 +9,11 @@ import json
 import logging
 from typing import List
 
-from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi import APIRouter, File, HTTPException, Query, Request, UploadFile
 from fastapi.responses import StreamingResponse
 
 from services.db_init import get_db
-from services.llm_client import chat, astream_chat
+from services.llm_client import chat, astream_chat, vision_chat
 from modules.debate.orchestrator import (
     run_debate as _run_debate,
     stream_debate as _stream_debate,
@@ -67,6 +67,40 @@ def _llm_config_from_request(request: Request) -> dict[str, str] | None:
         "model": model,
         "reasoning_model": reasoning_model or model,
     }
+
+
+@router.post("/api/debate/analyze-image")
+async def analyze_image(request: Request, file: UploadFile = File(...)):
+    """用视觉模型分析上传图片，提取金融数据文字。
+
+    复用首页「模型接入」配置的模型（通过 x-jh-llm-* 请求头传入）。
+    若用户未配置模型或模型不支持图片（如 DeepSeek V4），会返回 400 错误。
+    """
+    import base64
+
+    llm_config = _llm_config_from_request(request)
+    if not llm_config:
+        raise HTTPException(
+            status_code=400,
+            detail="图片分析需要配置支持视觉的模型。请在首页「模型接入」处配置 GPT-4o 或 Claude 等视觉模型后保存，再重试。",
+        )
+
+    allowed_types = {"image/jpeg", "image/png", "image/gif", "image/webp"}
+    media_type = (file.content_type or "image/jpeg").split(";")[0].strip()
+    if media_type not in allowed_types:
+        raise HTTPException(status_code=400, detail=f"不支持的图片格式：{media_type}")
+
+    content = await file.read()
+    if len(content) > 10 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="图片大小不能超过 10 MB")
+
+    image_b64 = base64.b64encode(content).decode()
+    try:
+        result = vision_chat(image_b64, media_type, llm_config)
+        return {"text": result}
+    except Exception as exc:
+        logger.error("图片分析失败: %s", exc, exc_info=True)
+        raise HTTPException(status_code=500, detail=f"图片分析失败：{exc}") from exc
 
 
 @router.post("/api/debate/run", response_model=DebateResponse)

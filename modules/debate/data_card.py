@@ -96,6 +96,7 @@ def generate(ts_code: str) -> dict:
     # 保留东财序列末位原始值，供与腾讯估值交叉验证
     em_pe = pct.get("pe_ttm") if pct else None
     em_pb = pct.get("pb") if pct else None
+    em_close = pct.get("close") if pct else None
     if pct:
         if val:
             pct = refresh_percentile_current(
@@ -249,7 +250,7 @@ def generate(ts_code: str) -> dict:
     # ═══════════════════════════════════════════════
     _cross_validate(
         fields, val=val, ths=akshare_data, sina=fin,
-        em_pe=em_pe, em_pb=em_pb, hist=hist,
+        em_pe=em_pe, em_pb=em_pb, em_close=em_close, hist=hist,
         holder=holder, close_price=close_price, eps_cur=eps_cur,
         em_fin=em_fin, gjzb=gjzb, quarters=fin_quarters,
         ths_report_as_of=ths_report_as_of,
@@ -655,7 +656,7 @@ def _cross_validate_ths_triple(fields: dict, ths: dict, sina_row: dict,
 
 
 def _cross_validate(fields: dict, val: dict = None, ths: dict = None,
-                    sina: dict = None, em_pe=None, em_pb=None,
+                    sina: dict = None, em_pe=None, em_pb=None, em_close=None,
                     hist: list = None, holder: dict = None,
                     close_price: float = 0, eps_cur: float = None,
                     em_fin: dict = None, gjzb: dict = None,
@@ -675,19 +676,28 @@ def _cross_validate(fields: dict, val: dict = None, ths: dict = None,
 
     # ── 行情层 ──
     if val:
+        # 东财历史序列末位是上一交易日收盘估值，腾讯为当日实时估值。
+        # PE/PB 与股价同向变动，个股当日大幅涨跌会因价格时点差产生超容差
+        # 假性偏差。先按价格比折算到当前价，仅校验盈利/净资产口径是否一致。
+        cur_price = val.get("price") or close_price
         if em_pe is not None:
-            _try_cross_validate(fields, "PE(TTM)", val.get("pe_ttm"), em_pe,
+            ref_pe = em_pe * cur_price / em_close if (em_close and cur_price and em_close > 0) else em_pe
+            _try_cross_validate(fields, "PE(TTM)", val.get("pe_ttm"), ref_pe,
                                 "东方财富历史估值", _TOL_VALUATION)
         if em_pb is not None:
-            _try_cross_validate(fields, "PB", val.get("pb"), em_pb,
+            ref_pb = em_pb * cur_price / em_close if (em_close and cur_price and em_close > 0) else em_pb
+            _try_cross_validate(fields, "PB", val.get("pb"), ref_pb,
                                 "东方财富历史估值", _TOL_VALUATION)
         if hist:
             _try_cross_validate(fields, "当前价", val.get("price"),
                                 hist[-1].get("close"), "mootdx K线", _TOL_PRICE)
-        if holder and holder.get("total_market_cap"):
-            em_mcap_yi = (holder.get("total_market_cap") or 0) / 1e8
-            _try_cross_validate(fields, "总市值", val.get("mcap_yi"), em_mcap_yi,
-                                "东方财富总市值", _TOL_VALUATION)
+        # 用腾讯实时价格 × 股东报告总股本自洽校验，避免与季度快照市值比较产生假C
+        if holder and holder.get("total_a_shares") and close_price > 0:
+            total_a_shares = holder.get("total_a_shares", 0) or 0
+            if total_a_shares > 0:
+                computed_mcap_yi = close_price * total_a_shares / 1e8
+                _try_cross_validate(fields, "总市值", val.get("mcap_yi"), computed_mcap_yi,
+                                    "自洽校验(当前价×股东报告总股本)", _TOL_VALUATION)
 
     # ── P0/P1：财报三源 + 细项 ──
     if ths and sina_row:

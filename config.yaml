@@ -8,7 +8,7 @@ llm:
   base_url: https://api.deepseek.com/v1
   max_tokens: 4096
   max_tokens_debate: 1024   # 辩论单轮约 200 字；512 会触发 length 截断
-  max_tokens_judge: 2048    # 裁判 JSON 输出（含长 summary）
+  max_tokens_judge: 4096    # 裁判 JSON（推理模型思考链+长 summary，过小会截断 JSON 致解析失败）
   max_tokens_coach: 2048    # 策略教练回复
   max_tokens_knowledge: 768 # 术语解释
   temperature: 0.7

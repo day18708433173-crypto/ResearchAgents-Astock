@@ -418,6 +418,7 @@ def stream_single_round(
         try:
             from services.rag.context_builder import enrich_data_card
             rag_context = enrich_data_card(ticker, card)
+            card["rag_context"] = rag_context  # 持久化，供第2/3轮恢复
             yield {"type": "status", "message": "RAG知识增强完成"}
         except Exception:
             pass
@@ -564,14 +565,19 @@ def _save_data_card(card: dict) -> int:
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );
     """)
+    # 兼容旧库：补充 rag_context 列，使分轮辩论的后续轮次也能恢复 RAG 上下文
+    existing_cols = {r[1] for r in conn.execute("PRAGMA table_info(data_cards)").fetchall()}
+    if "rag_context" not in existing_cols:
+        conn.execute("ALTER TABLE data_cards ADD COLUMN rag_context TEXT DEFAULT '{}'")
 
     cur = conn.execute(
-        "INSERT INTO data_cards (ticker, coverage, fields, generated_at) VALUES (?, ?, ?, ?)",
+        "INSERT INTO data_cards (ticker, coverage, fields, generated_at, rag_context) VALUES (?, ?, ?, ?, ?)",
         (
             card["ticker"],
             card["coverage"],
             json.dumps(card.get("fields", {})),
             card.get("generated_at", ""),
+            json.dumps(card.get("rag_context") or {}, ensure_ascii=False),
         ),
     )
     conn.commit()
@@ -662,16 +668,29 @@ def _load_data_card_for_debate(debate_id: int) -> tuple[dict, object]:
 
     data_card_id = row["data_card_id"]
     if data_card_id:
-        card_row = conn.execute(
-            "SELECT ticker, coverage, fields FROM data_cards WHERE id = ?", (data_card_id,)
-        ).fetchone()
+        try:
+            card_row = conn.execute(
+                "SELECT ticker, coverage, fields, rag_context FROM data_cards WHERE id = ?",
+                (data_card_id,),
+            ).fetchone()
+        except sqlite3.OperationalError:
+            # 旧库尚无 rag_context 列时降级查询
+            card_row = conn.execute(
+                "SELECT ticker, coverage, fields FROM data_cards WHERE id = ?", (data_card_id,)
+            ).fetchone()
         conn.close()
         if card_row:
             try:
                 fields = json.loads(card_row["fields"] or "{}")
             except Exception:
                 fields = {}
-            return {"ticker": card_row["ticker"], "coverage": card_row["coverage"], "fields": fields}, None
+            rag_context = None
+            if "rag_context" in card_row.keys():
+                try:
+                    rag_context = json.loads(card_row["rag_context"] or "{}") or None
+                except Exception:
+                    rag_context = None
+            return {"ticker": card_row["ticker"], "coverage": card_row["coverage"], "fields": fields}, rag_context
     conn.close()
     return {"ticker": "", "coverage": row["coverage"] or 0, "fields": {}}, None
 

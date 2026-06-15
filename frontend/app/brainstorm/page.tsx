@@ -20,6 +20,7 @@ import {
   type KnowledgeMessage as ApiKnowledgeMessage,
 } from '@/lib/api';
 import ResearchNoteEditor from '@/components/ResearchNoteEditor';
+import FocusTextarea from '@/components/FocusTextarea';
 import { useToast } from '@/components/toast-provider';
 import { useDebateStream, type Stock, type JudgeVerdict } from './useDebateStream';
 import DebatePanel from './DebatePanel';
@@ -928,12 +929,13 @@ export default function BrainstormPage() {
                         <div className="pt-1 border-t border-[var(--jh-border)]">
                           <div className="mb-3 text-xs font-medium text-[var(--jh-text-secondary)]">生成多空研究纪要</div>
                           {isIdle && (
-                            <Input
-                              placeholder="聚焦问题（可选），如：当前估值是否偏贵？"
+                            <FocusTextarea
+                              placeholder="聚焦问题（可选），如：当前估值是否偏贵？也可上传图片补充数据"
                               value={firstRoundFocusQuestion}
-                              onChange={(e) => setFirstRoundFocusQuestion(e.target.value)}
-                              className="mb-2 text-xs"
+                              onChange={setFirstRoundFocusQuestion}
+                              className="mb-2"
                               disabled={isStreaming}
+                              minRows={2}
                             />
                           )}
                           <div className="flex flex-wrap items-center gap-2">
@@ -1104,12 +1106,12 @@ export default function BrainstormPage() {
                       <div className="text-xs font-medium text-[var(--jh-text-secondary)] mb-2">
                         下一轮聚焦问题（可选）
                       </div>
-                      <Input
-                        placeholder="如：分红率是否可靠？也可补充数据，如：PE=15、净利润增速=20%"
+                      <FocusTextarea
+                        placeholder="如：分红率是否可靠？也可补充数据，如：PE=15、净利润增速=20%；或上传图片"
                         value={nextFocusQuestion}
-                        onChange={(e) => setNextFocusQuestion(e.target.value)}
-                        className="text-xs"
+                        onChange={setNextFocusQuestion}
                         disabled={isStreaming}
+                        minRows={2}
                       />
                     </div>
 
@@ -1161,12 +1163,13 @@ export default function BrainstormPage() {
                         <p className="mt-2 text-sm text-[var(--jh-text-muted)] leading-relaxed">
                           AI 将基于数据卡展开多空辩论，每轮完成后可指定聚焦问题引导下一轮方向。
                         </p>
-                        <Input
-                          placeholder="聚焦问题（可选），如：分红率是否可持续？也可直接补充数据，如：PE=15、净利润增速=20%"
+                        <FocusTextarea
+                          placeholder="聚焦问题（可选），如：分红率是否可持续？也可直接补充数据，如：PE=15、净利润增速=20%；或点击图标上传图片"
                           value={firstRoundFocusQuestion}
-                          onChange={(e) => setFirstRoundFocusQuestion(e.target.value)}
-                          className="mt-4 max-w-sm mx-auto text-sm"
+                          onChange={setFirstRoundFocusQuestion}
+                          className="mt-4 max-w-sm mx-auto text-left"
                           disabled={isStreaming}
+                          minRows={2}
                         />
                         <Button
                           onClick={handleStartFirstRound}

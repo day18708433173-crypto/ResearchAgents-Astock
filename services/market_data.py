@@ -120,6 +120,16 @@ def _resolve_pb_column(df) -> str | None:
     return None
 
 
+def _resolve_close_column(df) -> str | None:
+    """按列名匹配收盘价，用于估值交叉验证时对齐价格时点。"""
+    for col in df.columns:
+        if "收盘" in str(col).strip():
+            return col
+    if len(df.columns) > 1:
+        return df.columns[1]
+    return None
+
+
 def refresh_percentile_current(
     pct: dict,
     current_pe: float | None = None,
@@ -169,12 +179,19 @@ def get_valuation_percentiles(code: str) -> dict:
         if pb_col is not None
         else []
     )
+    close_col = _resolve_close_column(df)
+    close_series = (
+        pd.to_numeric(df[close_col], errors="coerce").tolist()
+        if close_col is not None
+        else []
+    )
 
     windows = {"1y": _PCT_WINDOW_1Y, "3y": _PCT_WINDOW_3Y, "5y": _PCT_WINDOW_5Y}
 
     return {
         "pe_ttm": pe_series[-1] if pe_series else None,
         "pb": pb_series[-1] if pb_series else None,
+        "close": close_series[-1] if close_series else None,
         "pe_ttm_pct": _window_percentiles(pe_series, windows),
         "pb_pct": _window_percentiles(pb_series, windows),
         "pe_series": pe_series,

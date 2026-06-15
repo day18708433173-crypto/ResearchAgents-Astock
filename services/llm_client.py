@@ -197,13 +197,23 @@ def stream_chat(
         temperature=cfg.get("temperature", 0.7),
         stream=True,
     )
+    emitted_content = False
+    reasoning_buf: list[str] = []
     for chunk in stream:
+        if not chunk.choices:
+            continue
         delta = chunk.choices[0].delta
         if delta.content:
+            emitted_content = True
             yield delta.content
+            continue
         reasoning = getattr(delta, "reasoning_content", None)
         if reasoning:
-            yield reasoning
+            reasoning_buf.append(reasoning)
+    # 思考链(reasoning_content)不应混入正文；仅当模型完全没有正文输出时，
+    # 才回退输出思考链，避免整段空白。
+    if not emitted_content and reasoning_buf:
+        yield "".join(reasoning_buf)
 
 
 async def astream_chat(
@@ -224,10 +234,59 @@ async def astream_chat(
         temperature=cfg.get("temperature", 0.7),
         stream=True,
     )
+    emitted_content = False
+    reasoning_buf: list[str] = []
     async for chunk in stream:
+        if not chunk.choices:
+            continue
         delta = chunk.choices[0].delta
         if delta.content:
+            emitted_content = True
             yield delta.content
+            continue
         reasoning = getattr(delta, "reasoning_content", None)
         if reasoning:
-            yield reasoning
+            reasoning_buf.append(reasoning)
+    # 思考链(reasoning_content)不应混入正文；仅当模型完全没有正文输出时，
+    # 才回退输出思考链，避免整段空白。
+    if not emitted_content and reasoning_buf:
+        yield "".join(reasoning_buf)
+
+
+def vision_chat(
+    image_b64: str,
+    media_type: str = "image/jpeg",
+    llm_config: Mapping[str, str] | None = None,
+) -> str:
+    """调用视觉模型分析图片，提取金融数据内容。
+
+    复用首页「模型接入」配置的 LLM（通过 llm_config 传入）。
+    若模型不支持图片（如 DeepSeek V4），API 会返回错误。
+    """
+    cfg = _resolve_config(llm_config)
+    client = create_client(llm_config)
+    model = (cfg.get("model") or "").strip()
+    max_tokens = int(cfg.get("max_tokens", 4096))
+
+    extract_prompt = (
+        "请仔细分析这张图片中的所有金融/投资相关信息，"
+        "包括财务数据、指标数值、表格内容、图表趋势、关键文字等，"
+        "以简洁清晰的文字格式输出，方便直接用于投资分析。"
+        "若图片包含数字表格，请逐行列出；若是图表，请描述关键趋势和数值。"
+    )
+
+    resp = client.chat.completions.create(
+        model=model,
+        messages=[{
+            "role": "user",
+            "content": [
+                {
+                    "type": "image_url",
+                    "image_url": {"url": f"data:{media_type};base64,{image_b64}"},
+                },
+                {"type": "text", "text": extract_prompt},
+            ],
+        }],
+        max_tokens=max_tokens,
+    )
+    return _message_text(resp.choices[0].message)
