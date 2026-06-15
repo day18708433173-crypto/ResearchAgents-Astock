@@ -384,30 +384,87 @@ def build_judge_prompt(ticker: str, name: str, rounds: list,
 
 
 def parse_judge_llm_output(raw: str | None) -> dict:
-    """解析裁判 LLM 输出为裁决 dict；无效或空输出时抛出 ValueError。"""
+    """解析裁判 LLM 输出为裁决 dict；无效或空输出时抛出 ValueError。
+
+    兼容以下常见输出格式：
+    - 纯 JSON
+    - ```json ... ``` 代码块包裹
+    - <think>...</think> 思考链前缀（推理模型）
+    - JSON 前后有额外文字说明
+    """
     import json
     import re
+    import logging
+
+    logger = logging.getLogger(__name__)
 
     text = (raw or "").strip()
     if not text:
         raise ValueError("裁判 LLM 返回为空，请检查 API Key / 模型配置或稍后重试")
 
+    # 1. 剥离推理模型的思考链标签（<think>/<thinking> 块中可能含有 { } 干扰正则）
+    text = re.sub(r"<think\b[^>]*>[\s\S]*?</think>", "", text, flags=re.IGNORECASE).strip()
+    text = re.sub(r"<thinking\b[^>]*>[\s\S]*?</thinking>", "", text, flags=re.IGNORECASE).strip()
+
+    # 2. 优先提取 Markdown 代码块中的 JSON
     fence = re.search(r"```(?:json)?\s*([\s\S]*?)```", text, re.IGNORECASE)
     if fence:
-        text = fence.group(1).strip()
+        candidate = fence.group(1).strip()
+        try:
+            verdict = json.loads(candidate)
+            if isinstance(verdict, dict):
+                return _finalize_judge_verdict(verdict)
+        except json.JSONDecodeError:
+            pass  # 代码块内容不合法，继续用括号匹配
 
-    match = re.search(r"\{[\s\S]*\}", text)
-    if not match:
-        raise ValueError(f"裁判输出不是合法 JSON：{text[:200]}")
+    # 3. 从第一个 { 开始做括号深度匹配，正确提取最外层 JSON 对象
+    start = text.find("{")
+    if start == -1:
+        logger.warning("裁判原始输出（前500字）：%s", text[:500])
+        raise ValueError(f"裁判输出不含 JSON 对象：{text[:200]}")
 
+    depth = 0
+    end = -1
+    in_string = False
+    escape_next = False
+    for i, ch in enumerate(text[start:], start):
+        if escape_next:
+            escape_next = False
+            continue
+        if ch == "\\" and in_string:
+            escape_next = True
+            continue
+        if ch == '"':
+            in_string = not in_string
+            continue
+        if not in_string:
+            if ch == "{":
+                depth += 1
+            elif ch == "}":
+                depth -= 1
+                if depth == 0:
+                    end = i + 1
+                    break
+
+    if end == -1:
+        logger.warning("裁判原始输出（前500字）：%s", text[:500])
+        raise ValueError(f"裁判输出 JSON 括号不匹配：{text[:200]}")
+
+    json_str = text[start:end]
     try:
-        verdict = json.loads(match.group())
+        verdict = json.loads(json_str)
     except json.JSONDecodeError as e:
+        logger.warning("裁判 JSON 解析失败，原始片段：%s", json_str[:300])
         raise ValueError(f"裁判 JSON 解析失败: {e}") from e
 
     if not isinstance(verdict, dict):
         raise ValueError("裁判输出格式错误")
 
+    return _finalize_judge_verdict(verdict)
+
+
+def _finalize_judge_verdict(verdict: dict) -> dict:
+    """校验裁判 dict 的必要字段，补全 summary 缺失情况。"""
     rating = (verdict.get("rating") or "").strip()
     summary = (verdict.get("summary") or "").strip()
     if not summary:
@@ -418,7 +475,6 @@ def parse_judge_llm_output(raw: str | None) -> dict:
         raise ValueError("裁判 JSON 缺少 rating 与 summary")
     if not summary:
         raise ValueError("裁判 JSON 缺少 summary 综合研判")
-
     return verdict
 
 

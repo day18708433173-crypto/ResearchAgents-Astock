@@ -71,11 +71,24 @@ def _select_model(cfg: dict, scenario: Scenario = "default", use_reasoning: bool
     return model
 
 
+def _strip_think_tags(text: str) -> str:
+    """剥除推理模型内联的 <think>...</think> 思考链，只保留正文。"""
+    import re
+    text = re.sub(r"<think\b[^>]*>[\s\S]*?</think>", "", text, flags=re.IGNORECASE)
+    text = re.sub(r"<thinking\b[^>]*>[\s\S]*?</thinking>", "", text, flags=re.IGNORECASE)
+    return text.strip()
+
+
 def _message_text(message) -> str:
-    """提取 assistant 文本；兼容 reasoning 模型把正文放在 reasoning_content 的情况。"""
+    """提取 assistant 文本；兼容 reasoning 模型把正文放在 reasoning_content 的情况。
+
+    部分代理/模型会把思考链内联在 content 里（<think>...</think>），
+    这里统一剥除，只返回最终正文。
+    """
     content = (getattr(message, "content", None) or "").strip()
     if content:
-        return content
+        cleaned = _strip_think_tags(content)
+        return cleaned if cleaned else content  # 若全是思考链则保留原文避免空返回
     reasoning = getattr(message, "reasoning_content", None)
     if reasoning and str(reasoning).strip():
         return str(reasoning).strip()
